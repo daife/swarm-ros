@@ -1,0 +1,26 @@
+# ROS 2 / colcon build artifacts
+build/
+install/
+log/
+
+# Python virtual environments
+venv/
+.venv/
+
+# Python cache and tooling
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+
+# Packaging outputs
+*.egg-info/
+dist/
+
+# IDE and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
