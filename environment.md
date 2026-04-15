@@ -71,3 +71,5 @@ glxgears
 
 配置代码补全
 https://github.com/akinomyoga/ble.sh
+
+踩坑记录：无法渲染是因为windhawk中Translucent Windows导致的
