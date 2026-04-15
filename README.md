@@ -289,6 +289,105 @@ ros2 launch swarm_bringup training_launch.py \
   gazebo_gui:=true
 ```
 
+### 5.4 Gazebo 常见训练情形（推荐直接复用）
+
+情形 A：从零开始训练（GUI 可视化观察）
+
+```bash
+cd ~/swarm-ros
+source ./env.sh
+source install/setup.bash
+ros2 launch swarm_bringup training_launch.py \
+  env_backend:=gazebo \
+  gazebo_gui:=true \
+  max_episodes:=300 \
+  max_steps:=120 \
+  reset_policy:=2 \
+  pursuer_algo:=maddpg \
+  pursuer_train_mode:=train_scratch \
+  evader_algo:=ddpg \
+  evader_train_mode:=train_scratch \
+  checkpoint_dir:=artifacts/checkpoints
+```
+
+情形 B：无图形长时间训练（服务器/后台）
+
+```bash
+cd ~/swarm-ros
+source ./env.sh
+source install/setup.bash
+ros2 launch swarm_bringup training_launch.py \
+  env_backend:=gazebo \
+  gazebo_gui:=false \
+  max_episodes:=3000 \
+  max_steps:=150 \
+  reset_policy:=2 \
+  pursuer_algo:=maddpg \
+  pursuer_train_mode:=train_scratch \
+  evader_algo:=ddpg \
+  evader_train_mode:=train_scratch \
+  checkpoint_dir:=artifacts/checkpoints
+```
+
+情形 C：加载最优权重继续训练（Fine-tune）
+
+```bash
+cd ~/swarm-ros
+source ./env.sh
+source install/setup.bash
+ros2 launch swarm_bringup training_launch.py \
+  env_backend:=gazebo \
+  gazebo_gui:=false \
+  max_episodes:=800 \
+  max_steps:=120 \
+  pursuer_algo:=maddpg \
+  pursuer_train_mode:=train_load \
+  pursuer_weights:=artifacts/checkpoints/pursuer_policy_best.pth \
+  evader_algo:=ddpg \
+  evader_train_mode:=train_load \
+  evader_weights:=artifacts/checkpoints/pursuer_policy_evader_best.pth \
+  checkpoint_dir:=artifacts/checkpoints
+```
+
+情形 D：固定逃避者，仅训练追捕者
+
+```bash
+cd ~/swarm-ros
+source ./env.sh
+source install/setup.bash
+ros2 launch swarm_bringup training_launch.py \
+  env_backend:=gazebo \
+  gazebo_gui:=true \
+  max_episodes:=600 \
+  max_steps:=120 \
+  pursuer_algo:=maddpg \
+  pursuer_train_mode:=train_scratch \
+  evader_algo:=ddpg \
+  evader_train_mode:=eval_only \
+  evader_weights:=artifacts/checkpoints/pursuer_policy_evader_best.pth \
+  checkpoint_dir:=artifacts/checkpoints
+```
+
+情形 E：纯策略评估（双方冻结，不训练）
+
+```bash
+cd ~/swarm-ros
+source ./env.sh
+source install/setup.bash
+ros2 launch swarm_bringup training_launch.py \
+  env_backend:=gazebo \
+  gazebo_gui:=true \
+  max_episodes:=50 \
+  max_steps:=120 \
+  pursuer_algo:=maddpg \
+  pursuer_train_mode:=eval_only \
+  pursuer_weights:=artifacts/checkpoints/pursuer_policy_best.pth \
+  evader_algo:=ddpg \
+  evader_train_mode:=eval_only \
+  evader_weights:=artifacts/checkpoints/pursuer_policy_evader_best.pth \
+  checkpoint_dir:=artifacts/checkpoints
+```
+
 ## 6. Gazebo 链路验证（必须执行）
 
 先启动 Gazebo 后端（见 5.2），再在另一个终端执行：

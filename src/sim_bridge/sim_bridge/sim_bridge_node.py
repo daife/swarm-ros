@@ -51,6 +51,7 @@ class SimBridgeNode(Node):
         self.accels: Dict[int, np.ndarray] = {}
         self.positions: Dict[int, np.ndarray] = {}
         self.velocities: Dict[int, np.ndarray] = {}
+        self.model_ready: Dict[int, bool] = {}
 
         set_pose_service = f"/world/{self.world_name}/set_pose"
         self.set_pose_client = self.create_client(SetEntityPose, set_pose_service)
@@ -70,6 +71,7 @@ class SimBridgeNode(Node):
             self.accels[agent_id] = np.zeros(2, dtype=float)
             self.positions[agent_id] = np.zeros(2, dtype=float)
             self.velocities[agent_id] = np.zeros(2, dtype=float)
+            self.model_ready[agent_id] = False
 
             self.create_subscription(
                 Odometry,
@@ -106,6 +108,7 @@ class SimBridgeNode(Node):
         )
 
     def on_model_odom(self, agent_id: int, msg: Odometry) -> None:
+        self.model_ready[agent_id] = True
         self.positions[agent_id][0] = msg.pose.pose.position.x
         self.positions[agent_id][1] = msg.pose.pose.position.y
         self.velocities[agent_id][0] = msg.twist.twist.linear.x
@@ -150,6 +153,9 @@ class SimBridgeNode(Node):
 
     def control_step(self) -> None:
         for agent_id, model_name in self.agent_names:
+            if not self.model_ready.get(agent_id, False):
+                continue
+
             acc = self.accels[agent_id]
             vel = self.velocities[agent_id]
             pos = self.positions[agent_id]
