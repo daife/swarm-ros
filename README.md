@@ -42,6 +42,24 @@
 | obstacle_density | float | 0.3 | 随机障碍密度 |
 | world_half_extent | float | 10.0 | 世界半边长 |
 
+参数细化说明：
+
+1. `world_mode`:
+  - `fixed`: 使用固定布局，便于算法对比、回归测试。
+  - `random`: 每次重置可变化，泛化更好，但训练波动会更大。
+2. `seed_mode`:
+  - `single`: 每轮都用同一个种子，适合复现实验。
+  - `sequence`: 在 `seed_sequence` 中循环，兼顾稳定性与多样性。
+  - `none`: 完全随机，探索性最强。
+3. `seed_value` / `seed_sequence`:
+  - 当你需要“可重复”结果时，优先固定这两个参数。
+4. `obstacle_density`:
+  - 典型可用范围 `0.1 ~ 0.5`。
+  - 越大表示障碍越密，碰撞概率上升，训练初期可能更难收敛。
+5. `world_half_extent`:
+  - 世界边界为 `[-world_half_extent, +world_half_extent]`。
+  - 建议与 `spawn_half_extent`、`sim_bridge.world_half_extent` 保持一致或前者更小。
+
 话题：
 
 - Sub: /scheduler/reset_world (std_msgs/Empty)
@@ -63,6 +81,22 @@
 | world_name | string | urban | Gazebo world 名，用于 set_pose 服务路径 |
 | pursuer_name_prefix | string | pursuer | 追捕者模型名前缀 |
 | evader_name_prefix | string | evader | 逃避者模型名前缀 |
+
+参数细化说明：
+
+1. `safe_spawn_distance`:
+  - 常用范围 `1.0 ~ 2.5`。
+  - 值越大，出生点离障碍越远，碰撞少但可采样空间更小。
+2. `spawn_half_extent`:
+  - 推荐满足 `spawn_half_extent <= world_half_extent - 0.5`。
+  - 太大时可能贴近边界，影响初始动作质量。
+3. `spawn_attempts`:
+  - 常用 `200 ~ 1000`。
+  - 障碍密度高时建议增大，避免频繁触发原点回退。
+4. `world_name`:
+  - 必须与 Gazebo 实际 world 名一致，否则 `set_pose` 会失败。
+5. `pursuer_name_prefix` / `evader_name_prefix`:
+  - 需与模型注入时命名规则一致（如 `pursuer_0`、`evader_0`）。
 
 话题与服务：
 
@@ -91,6 +125,24 @@
 | linear_drag | float | 0.15 | 线性阻尼 |
 | world_half_extent | float | 10.0 | 位置边界裁剪 |
 
+参数细化说明：
+
+1. `controller_enabled`:
+  - `true`: 使用加速度积分控制并回写 Gazebo 位姿（训练必需）。
+  - `false`: 仅桥接，不做控制回写。
+2. `controller_dt`:
+  - 控制周期，常用 `0.02 ~ 0.1` 秒。
+  - 越小越平滑，但计算频率更高。
+3. `max_speed`:
+  - 建议范围 `2.0 ~ 5.0`。
+  - 过大可能导致追捕行为过于激进，训练不稳定。
+4. `linear_drag`:
+  - 建议范围 `0.05 ~ 0.4`。
+  - 较大时速度衰减快，轨迹更稳但机动性降低。
+5. `world_half_extent`:
+  - 控制器会对位置做边界裁剪，防止实体越界。
+  - 应与环境边界一致，避免“看起来卡墙/瞬移”的现象。
+
 话题：
 
 - Sub: /model/<name>/odometry
@@ -116,6 +168,16 @@
 | max_speed | float | 3.0 | 速度上限 |
 | linear_drag | float | 0.15 | 阻尼 |
 | spawn_half_extent | float | 8.0 | 初始采样范围 |
+
+参数细化说明：
+
+1. `dt`:
+  - 常用 `0.03 ~ 0.1`。
+  - 过大时积分误差明显，过小时训练速度变慢。
+2. `spawn_half_extent`:
+  - 建议略小于 `world_half_extent`，给边界留缓冲。
+3. `max_speed` 与 `linear_drag`:
+  - 与 Gazebo 端尽量对齐，便于从 mock 迁移到真仿真。
 
 ### 2.5 rl_policy
 
@@ -162,6 +224,40 @@
 | checkpoint_prefix | string | pursuer_policy | 权重前缀 |
 | use_synthetic_obs_when_missing | bool | true | 缺失观测时是否回退合成观测 |
 
+参数细化说明：
+
+1. 训练模式参数：
+  - `train_scratch`: 从零训练，不加载旧权重。
+  - `train_load`: 读取已有权重后继续训练（fine-tune）。
+  - `eval_only`: 仅推理，不更新参数。
+2. 学习率参数（`*_actor_lr`, `*_critic_lr`）：
+  - 常用级别 `1e-4 ~ 1e-3`。
+  - 过大易震荡，过小收敛慢。
+3. `discount_gamma`:
+  - 常用 `0.95 ~ 0.995`。
+  - 越接近 `1.0` 越重视长期回报。
+4. `target_tau`:
+  - 常用 `0.005 ~ 0.02`。
+  - 越小越稳定，但目标网络更新更慢。
+5. `buffer_capacity` 与 `batch_size`:
+  - 容量大有助于去相关，但占内存更高。
+  - `batch_size` 常用 `64/128/256`，越大梯度更平滑但更慢。
+6. `warmup_steps`:
+  - 训练前仅收集样本的步数。
+  - 环境难度高时可适当增大（如 `1000+`）。
+7. `train_updates_per_step`:
+  - 每个环境步触发的参数更新次数。
+  - 大于 `1` 可加快学习，但也可能过拟合近期样本。
+8. `exploration_noise_std`:
+  - 常用 `0.1 ~ 0.3`。
+  - 太小探索不足，太大动作抖动严重。
+9. `max_accel`:
+  - 动作尺度上限，应与控制器和场景大小匹配。
+10. `capture_radius` 与 `collision_penalty`:
+  - 前者影响 done 判定难度，后者影响风险规避倾向。
+11. `use_synthetic_obs_when_missing`:
+  - Gazebo 启动早期观测未齐时，`true` 能降低训练中断风险。
+
 checkpoint 产物：
 
 - <prefix>_latest.pth
@@ -185,9 +281,44 @@ checkpoint 产物：
 | capture_radius | float | 2.0 | 追捕半径 |
 | capture_steps | int | 5 | 连续满足追捕步数 |
 
+参数细化说明：
+
+1. `max_episodes`:
+  - 整体训练预算，建议先小规模验证（如 `20~100`），再扩到 `1000+`。
+2. `max_steps`:
+  - 单回合时长上限。
+  - 过小会频繁超时，过大则训练单回合成本高。
+3. `reset_policy`:
+  - `1`: 固定重置到初始点，训练最稳定。
+  - `2`: 安全随机重置，泛化更好（推荐默认）。
+  - `3`: 先重置世界再随机，难度最高、适合后期增强。
+4. `capture_radius` 与 `capture_steps`:
+  - 两者共同决定捕获成功门槛。
+  - 半径更大、连续步数更小会更容易判定捕获。
+5. `collision_penalty`:
+  - 该值越负，策略越倾向规避碰撞。
+
 指标消息 /rl/episode_metrics:
 
 - [episode, step, done_reason, capture_streak, collision_events, collision_penalty_total]
+
+训练指标输出详解：
+
+| 下标 | 字段名 | 示例值 | 含义 | 典型范围/判读 |
+| --- | --- | --- | --- | --- |
+| 0 | episode | 128 | 当前回合序号（从 0 开始） | 递增到 `max_episodes` |
+| 1 | step | 97 | 当前回合结束时的步数 | `1 ~ max_steps` |
+| 2 | done_reason | 1 | 回合结束原因 | `1=捕获`, `2=碰撞`, `3=超时` |
+| 3 | capture_streak | 5 | 结束时连续满足捕获条件的步数 | 若常达 `capture_steps`，说明捕获效率在提升 |
+| 4 | collision_events | 2 | 该回合累计碰撞事件数 | 趋势下降通常表示避障能力提升 |
+| 5 | collision_penalty_total | -4.0 | 该回合碰撞惩罚累计值 | 约等于 `collision_events * collision_penalty` |
+
+补充说明：
+
+1. `done_reason` 分布是最直接的训练健康度信号。
+2. 如果长期大量 `done_reason=2`，优先调大 `safe_spawn_distance` 或提高碰撞惩罚绝对值。
+3. 如果长期大量 `done_reason=3`，可适当增大 `max_steps`，或提高探索噪声与动作上限。
+4. 建议同时观察 `rl_policy_node` 日志中的 `pursuer_return`、`evader_return`、`replay`，与本话题联合判断收敛。
 
 ## 3. Gazebo 资产
 
@@ -207,7 +338,7 @@ world 已包含：
 
 1. Physics、Sensors、Contact 等系统插件。
 2. 地面与固定建筑物（与 world_manager fixed 障碍布局一致）。
-3. 6 架预置无人机实体（pursuer_0..4, evader_0）。
+3. 无预置无人机实体；训练启动时由 launch 动态注入（pursuer_0..4, evader_0）。
 
 ## 4. Launch 参数
 
@@ -239,183 +370,19 @@ world 已包含：
 | gazebo_max_speed | 3.0 | Gazebo速度上限 |
 | gazebo_linear_drag | 0.15 | Gazebo阻尼 |
 
-## 5. 运行示例
+Launch 参数细化说明：
 
-### 5.1 Mock 后端训练
+1. `env_backend`:
+  - `mock`: 纯运动学，训练快，适合算法迭代。
+  - `gazebo`: 真仿真，结果更贴近真实动力学。
+2. `gazebo_gui`:
+  - `true` 方便观察行为与调试。
+  - `false` 适合长时训练与服务器运行。
+3. `pursuer_*` 与 `evader_*` 参数：
+  - 两组参数可独立设置，支持“一方训练一方冻结”。
+4. `checkpoint_dir`:
+  - 建议为实验分目录，如 `artifacts/checkpoints/exp_20260415`，避免覆盖。
+5. `gazebo_controller_*`:
+  - 这组参数直接透传给 `sim_bridge` 控制器，建议与 mock 端动力学参数保持一致。
 
-```bash
-cd ~/swarm-ros
-source ./env.sh
-colcon build --base-paths src
-source install/setup.bash
-ros2 launch swarm_bringup training_launch.py \
-  env_backend:=mock \
-  max_episodes:=20 \
-  max_steps:=100 \
-  reset_policy:=2 \
-  pursuer_algo:=maddpg \
-  pursuer_train_mode:=train_scratch \
-  evader_algo:=ddpg \
-  evader_train_mode:=train_scratch \
-  checkpoint_dir:=artifacts/checkpoints
-```
 
-### 5.2 Gazebo 后端训练（无图形）
-
-```bash
-cd ~/swarm-ros
-source ./env.sh
-colcon build --base-paths src
-source install/setup.bash
-ros2 launch swarm_bringup training_launch.py \
-  env_backend:=gazebo \
-  gazebo_gui:=false \
-  max_episodes:=200 \
-  max_steps:=120 \
-  reset_policy:=2 \
-  pursuer_algo:=maddpg \
-  pursuer_train_mode:=train_load \
-  pursuer_weights:=artifacts/checkpoints/pursuer_policy_best.pth \
-  evader_algo:=ddpg \
-  evader_train_mode:=eval_only \
-  checkpoint_dir:=artifacts/checkpoints
-```
-
-### 5.3 Gazebo 后端训练（有图形）
-
-```bash
-ros2 launch swarm_bringup training_launch.py \
-  env_backend:=gazebo \
-  gazebo_gui:=true
-```
-
-### 5.4 Gazebo 常见训练情形（推荐直接复用）
-
-情形 A：从零开始训练（GUI 可视化观察）
-
-```bash
-cd ~/swarm-ros
-source ./env.sh
-source install/setup.bash
-ros2 launch swarm_bringup training_launch.py \
-  env_backend:=gazebo \
-  gazebo_gui:=true \
-  max_episodes:=300 \
-  max_steps:=120 \
-  reset_policy:=2 \
-  pursuer_algo:=maddpg \
-  pursuer_train_mode:=train_scratch \
-  evader_algo:=ddpg \
-  evader_train_mode:=train_scratch \
-  checkpoint_dir:=artifacts/checkpoints
-```
-
-情形 B：无图形长时间训练（服务器/后台）
-
-```bash
-cd ~/swarm-ros
-source ./env.sh
-source install/setup.bash
-ros2 launch swarm_bringup training_launch.py \
-  env_backend:=gazebo \
-  gazebo_gui:=false \
-  max_episodes:=3000 \
-  max_steps:=150 \
-  reset_policy:=2 \
-  pursuer_algo:=maddpg \
-  pursuer_train_mode:=train_scratch \
-  evader_algo:=ddpg \
-  evader_train_mode:=train_scratch \
-  checkpoint_dir:=artifacts/checkpoints
-```
-
-情形 C：加载最优权重继续训练（Fine-tune）
-
-```bash
-cd ~/swarm-ros
-source ./env.sh
-source install/setup.bash
-ros2 launch swarm_bringup training_launch.py \
-  env_backend:=gazebo \
-  gazebo_gui:=false \
-  max_episodes:=800 \
-  max_steps:=120 \
-  pursuer_algo:=maddpg \
-  pursuer_train_mode:=train_load \
-  pursuer_weights:=artifacts/checkpoints/pursuer_policy_best.pth \
-  evader_algo:=ddpg \
-  evader_train_mode:=train_load \
-  evader_weights:=artifacts/checkpoints/pursuer_policy_evader_best.pth \
-  checkpoint_dir:=artifacts/checkpoints
-```
-
-情形 D：固定逃避者，仅训练追捕者
-
-```bash
-cd ~/swarm-ros
-source ./env.sh
-source install/setup.bash
-ros2 launch swarm_bringup training_launch.py \
-  env_backend:=gazebo \
-  gazebo_gui:=true \
-  max_episodes:=600 \
-  max_steps:=120 \
-  pursuer_algo:=maddpg \
-  pursuer_train_mode:=train_scratch \
-  evader_algo:=ddpg \
-  evader_train_mode:=eval_only \
-  evader_weights:=artifacts/checkpoints/pursuer_policy_evader_best.pth \
-  checkpoint_dir:=artifacts/checkpoints
-```
-
-情形 E：纯策略评估（双方冻结，不训练）
-
-```bash
-cd ~/swarm-ros
-source ./env.sh
-source install/setup.bash
-ros2 launch swarm_bringup training_launch.py \
-  env_backend:=gazebo \
-  gazebo_gui:=true \
-  max_episodes:=50 \
-  max_steps:=120 \
-  pursuer_algo:=maddpg \
-  pursuer_train_mode:=eval_only \
-  pursuer_weights:=artifacts/checkpoints/pursuer_policy_best.pth \
-  evader_algo:=ddpg \
-  evader_train_mode:=eval_only \
-  evader_weights:=artifacts/checkpoints/pursuer_policy_evader_best.pth \
-  checkpoint_dir:=artifacts/checkpoints
-```
-
-## 6. Gazebo 链路验证（必须执行）
-
-先启动 Gazebo 后端（见 5.2），再在另一个终端执行：
-
-```bash
-cd ~/swarm-ros
-source ./env.sh
-source install/setup.bash
-
-ros2 topic list | grep -E "agent_0/odom|agent_0/collision|model/pursuer_0/odometry"
-ros2 topic echo --no-daemon --once /agent_0/odom
-ros2 topic echo --no-daemon --once /agent_0/collision
-ros2 topic echo --no-daemon --once /model/pursuer_0/odometry
-```
-
-若需要主动验证碰撞，可将实体移动到建筑物附近后再观察 collision：
-
-```bash
-ros2 service call /world/urban/set_pose ros_gz_interfaces/srv/SetEntityPose "{entity: {name: pursuer_0, type: 2}, pose: {position: {x: -5.0, y: -1.5, z: 1.0}}}"
-ros2 topic echo --no-daemon --once /agent_0/collision
-```
-
-## 7. 参数覆盖核查结论
-
-README 中列出的参数均已在对应节点声明并具备实际逻辑：
-
-1. world_manager: 世界生成/随机种子/障碍发布均已实现。
-2. agent_manager: 安全采样 + SetEntityPose 重置已实现。
-3. rl_policy: MADDPG/DDPG 训练与权重读写已实现；cbc_tp_net 当前明确为未实现占位。
-4. training_coordinator: done 判定与 reset 时序已实现，collision_penalty 已纳入指标统计。
-5. launch: gazebo_gui 有图形/无图形模式切换已实现。

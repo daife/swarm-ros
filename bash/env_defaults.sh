@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "${ROOT_DIR}"
+
+# ROS setup 脚本在某些发行版里会直接读取未定义变量，和 `set -u` 冲突。
+# 这里临时关闭 nounset，source 完毕后恢复严格模式。
+set +u
+source "${ROOT_DIR}/env.sh"
+source "${ROOT_DIR}/install/setup.bash"
+set -u
+
+# ---------- 10_gazebo_gui.sh ----------
+export WORLD_NAME="${WORLD_NAME:-urban}"                    # 可选: Gazebo world 名称
+export WORLD_SDF="${WORLD_SDF:-${ROOT_DIR}/src/swarm_bringup/worlds/urban.world}"  # 可选: world 文件路径
+
+# ---------- 11_parameter_bridge.sh ----------
+export NUM_PURSUERS="${NUM_PURSUERS:-5}"                   # 可选: 追捕者数量
+export NUM_EVADERS="${NUM_EVADERS:-1}"                     # 可选: 逃避者数量
+export PURSUER_PREFIX="${PURSUER_PREFIX:-pursuer}"         # 可选: 追捕者模型名前缀
+export EVADER_PREFIX="${EVADER_PREFIX:-evader}"            # 可选: 逃避者模型名前缀
+
+# ---------- 12_spawn_agents.sh ----------
+export SPAWN_X0="${SPAWN_X0:--6.0}"                       # 可选: 初始网格 x 起点
+export SPAWN_Y0="${SPAWN_Y0:--6.0}"                       # 可选: 初始网格 y 起点
+export SPAWN_SPACING="${SPAWN_SPACING:-2.2}"              # 可选: 初始网格间距
+export SPAWN_COLUMNS="${SPAWN_COLUMNS:-4}"                # 可选: 每行放置数量
+export SPAWN_TIMEOUT_MS="${SPAWN_TIMEOUT_MS:-3000}"       # 可选: 单个实体 spawn 超时(ms)
+export PURSUER_SDF="${PURSUER_SDF:-}"                     # 可选: pursuer SDF 绝对路径，留空则自动从包目录推断
+export EVADER_SDF="${EVADER_SDF:-}"                       # 可选: evader SDF 绝对路径，留空则自动从包目录推断
+
+# ---------- 20_world_manager_node.sh ----------
+export WORLD_MODE="${WORLD_MODE:-random}"                   # 可选: fixed/random
+export SEED_MODE="${SEED_MODE:-sequence}"                      # 可选: single/sequence/none(纯随机种子)
+export SEED_VALUE="${SEED_VALUE:-42}"                      # 可选: 固定随机种子
+export SEED_SEQUENCE="${SEED_SEQUENCE:-[42, 100, 777, 2026]}"  # 可选: 种子序列(YAML数组)
+export OBSTACLE_DENSITY="${OBSTACLE_DENSITY:-0.3}"         # 可选: 障碍密度
+export WORLD_HALF_EXTENT="${WORLD_HALF_EXTENT:-10.0}"      # 可选: 世界半边长
+
+# ---------- 21_agent_manager_node.sh ----------
+export SAFE_SPAWN_DISTANCE="${SAFE_SPAWN_DISTANCE:-1.5}"   # 可选: 与障碍最小安全距离
+export SPAWN_HALF_EXTENT="${SPAWN_HALF_EXTENT:-9.0}"       # 可选: 出生采样边界半径
+export SPAWN_ATTEMPTS="${SPAWN_ATTEMPTS:-300}"             # 可选: 单个体采样最大尝试次数
+
+# ---------- 22_sim_bridge_node.sh ----------
+export GAZEBO_CONTROLLER_ENABLED="${GAZEBO_CONTROLLER_ENABLED:-true}"  # 可选: 是否启用控制器
+export GAZEBO_CONTROLLER_DT="${GAZEBO_CONTROLLER_DT:-0.05}"            # 可选: 控制积分周期(s)
+export GAZEBO_MAX_SPEED="${GAZEBO_MAX_SPEED:-3.0}"                      # 可选: 速度上限
+export GAZEBO_LINEAR_DRAG="${GAZEBO_LINEAR_DRAG:-0.15}"                # 可选: 线性阻尼
+
+# ---------- 23_rl_policy_node.sh ----------
+export PURSUER_ALGO="${PURSUER_ALGO:-maddpg}"             # 可选: maddpg/cbc_tp_net(占位)
+export PURSUER_TRAIN_MODE="${PURSUER_TRAIN_MODE:-train_scratch}"  # 可选: train_scratch/train_load/eval_only
+export PURSUER_WEIGHTS="${PURSUER_WEIGHTS:-}"             # 可选: 追捕者权重路径
+export EVADER_ALGO="${EVADER_ALGO:-ddpg}"                 # 可选: ddpg
+export EVADER_TRAIN_MODE="${EVADER_TRAIN_MODE:-eval_only}"  # 可选: train_scratch/train_load/eval_only
+export EVADER_WEIGHTS="${EVADER_WEIGHTS:-}"               # 可选: 逃避者权重路径
+export MAX_ACCEL="${MAX_ACCEL:-1.0}"                      # 可选: 动作最大加速度
+export CAPTURE_RADIUS="${CAPTURE_RADIUS:-2.0}"            # 可选: 判定捕获半径
+export COLLISION_PENALTY="${COLLISION_PENALTY:--2.0}"     # 可选: 碰撞惩罚
+export DISCOUNT_GAMMA="${DISCOUNT_GAMMA:-0.99}"           # 可选: 折扣因子
+export TARGET_TAU="${TARGET_TAU:-0.01}"                   # 可选: 软更新系数
+export PURSUER_ACTOR_LR="${PURSUER_ACTOR_LR:-0.0003}"     # 可选: 追捕者 Actor 学习率
+export PURSUER_CRITIC_LR="${PURSUER_CRITIC_LR:-0.001}"    # 可选: 追捕者 Critic 学习率
+export EVADER_ACTOR_LR="${EVADER_ACTOR_LR:-0.0003}"       # 可选: 逃避者 Actor 学习率
+export EVADER_CRITIC_LR="${EVADER_CRITIC_LR:-0.001}"      # 可选: 逃避者 Critic 学习率
+export BUFFER_CAPACITY="${BUFFER_CAPACITY:-200000}"       # 可选: replay 容量
+export BATCH_SIZE="${BATCH_SIZE:-128}"                    # 可选: batch 大小
+export WARMUP_STEPS="${WARMUP_STEPS:-500}"                # 可选: 热身步数
+export TRAIN_UPDATES_PER_STEP="${TRAIN_UPDATES_PER_STEP:-1}"  # 可选: 每步更新次数
+export EXPLORATION_NOISE_STD="${EXPLORATION_NOISE_STD:-0.2}"  # 可选: 探索噪声
+export POLICY_UPDATE_INTERVAL="${POLICY_UPDATE_INTERVAL:-1}"  # 可选: 策略更新间隔
+export OPTIMIZE_HORIZON_STEPS="${OPTIMIZE_HORIZON_STEPS:-120}"  # 可选: 时域参数
+export CHECKPOINT_DIR="${CHECKPOINT_DIR:-artifacts/checkpoints}"  # 可选: 权重保存目录
+export CHECKPOINT_PREFIX="${CHECKPOINT_PREFIX:-pursuer_policy}"     # 可选: 权重文件前缀
+export USE_SYNTHETIC_OBS_WHEN_MISSING="${USE_SYNTHETIC_OBS_WHEN_MISSING:-true}"  # 可选: 观测缺失时回退
+
+# ---------- 24_training_coordinator_node.sh ----------
+export MAX_EPISODES="${MAX_EPISODES:-60}"                 # 可选: 最大训练回合数
+export MAX_STEPS="${MAX_STEPS:-120}"                      # 可选: 每回合最大步数
+export RESET_POLICY="${RESET_POLICY:-2}"                  # 可选: 1固定重置/2安全随机/3重置世界再随机
+export CAPTURE_STEPS="${CAPTURE_STEPS:-5}"                # 可选: 连续捕获步数阈值
