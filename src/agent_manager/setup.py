@@ -1,10 +1,10 @@
 from setuptools import find_packages, setup
 
-package_name = "demo_pubsub"
+package_name = "agent_manager"
 
 setup(
     name=package_name,
-    version="0.0.1",
+    version="0.1.0",
     packages=find_packages(exclude=["test"]),
     data_files=[
         ("share/ament_index/resource_index/packages", [f"resource/{package_name}"]),
@@ -14,13 +14,11 @@ setup(
     zip_safe=True,
     maintainer="dev",
     maintainer_email="dev@example.com",
-    description="Simple ROS 2 Python pub/sub demo package.",
+    description="Agent manager node for reset orchestration and safe spawn checks.",
     license="Apache-2.0",
-    tests_require=["pytest"],
     entry_points={
         "console_scripts": [
-            "talker = demo_pubsub.talker:main",
-            "listener = demo_pubsub.listener:main",
+            "agent_manager_node = agent_manager.agent_manager_node:main",
         ],
     },
 )
