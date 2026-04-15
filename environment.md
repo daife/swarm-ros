@@ -60,9 +60,14 @@ source /opt/ros/jazzy/setup.bash
 source ~/swarm-ros/env.sh
 ```
 
+## 杂项
 查看是否使用gpu：
 root@Computer:~# glxinfo | grep "OpenGL renderer"
 Dropped Escape call with ulEscapeCode : 0x03007703
 OpenGL renderer string: D3D12 (AMD Radeon 780M Graphics)
 
-验证图形化是否正常glxgears
+验证图形化是否正常
+glxgears
+
+配置代码补全
+https://github.com/akinomyoga/ble.sh
