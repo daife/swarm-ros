@@ -73,3 +73,4 @@ glxgears
 https://github.com/akinomyoga/ble.sh
 
 踩坑记录：wsl无法渲染是由于梯子、网络相关的东西导致的，因为数据应该是通过本地端口转发的
+解决办法，不使用tun模式，而是使用系统代理即可
