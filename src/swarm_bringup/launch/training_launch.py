@@ -1,12 +1,24 @@
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, ExecuteProcess
-from launch.substitutions import LaunchConfiguration
+from launch.conditions import IfCondition
+from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description() -> LaunchDescription:
+    env_backend = LaunchConfiguration("env_backend")
     num_pursuers = LaunchConfiguration("num_pursuers")
     num_evaders = LaunchConfiguration("num_evaders")
+    max_episodes = LaunchConfiguration("max_episodes")
+    max_steps = LaunchConfiguration("max_steps")
+    reset_policy = LaunchConfiguration("reset_policy")
+    pursuer_train_mode = LaunchConfiguration("pursuer_train_mode")
+    pursuer_weights = LaunchConfiguration("pursuer_weights")
+    checkpoint_dir = LaunchConfiguration("checkpoint_dir")
+
+    gazebo_condition = IfCondition(PythonExpression(["'", env_backend, "' == 'gazebo'"]))
+    mock_condition = IfCondition(PythonExpression(["'", env_backend, "' == 'mock'"]))
 
     bridge_args = [
         "/world/urban/set_pose@ros_gz_interfaces/srv/SetEntityPose",
@@ -26,11 +38,19 @@ def generate_launch_description() -> LaunchDescription:
 
     return LaunchDescription(
         [
+            DeclareLaunchArgument("env_backend", default_value="mock"),
             DeclareLaunchArgument("num_pursuers", default_value="5"),
             DeclareLaunchArgument("num_evaders", default_value="1"),
+            DeclareLaunchArgument("max_episodes", default_value="60"),
+            DeclareLaunchArgument("max_steps", default_value="120"),
+            DeclareLaunchArgument("reset_policy", default_value="2"),
+            DeclareLaunchArgument("pursuer_train_mode", default_value="train_scratch"),
+            DeclareLaunchArgument("pursuer_weights", default_value=""),
+            DeclareLaunchArgument("checkpoint_dir", default_value="artifacts/checkpoints"),
             ExecuteProcess(
                 cmd=["ros2", "run", "ros_gz_bridge", "parameter_bridge", *bridge_args],
                 output="screen",
+                condition=gazebo_condition,
             ),
             Node(
                 package="world_manager",
@@ -55,8 +75,8 @@ def generate_launch_description() -> LaunchDescription:
                 output="screen",
                 parameters=[
                     {
-                        "num_pursuers": num_pursuers,
-                        "num_evaders": num_evaders,
+                        "num_pursuers": ParameterValue(num_pursuers, value_type=int),
+                        "num_evaders": ParameterValue(num_evaders, value_type=int),
                         "safe_spawn_distance": 1.5,
                         "spawn_half_extent": 9.0,
                         "spawn_attempts": 300,
@@ -71,10 +91,29 @@ def generate_launch_description() -> LaunchDescription:
                 output="screen",
                 parameters=[
                     {
-                        "num_pursuers": num_pursuers,
-                        "num_evaders": num_evaders,
+                        "num_pursuers": ParameterValue(num_pursuers, value_type=int),
+                        "num_evaders": ParameterValue(num_evaders, value_type=int),
                     }
                 ],
+                condition=gazebo_condition,
+            ),
+            Node(
+                package="mock_env",
+                executable="mock_env_node",
+                name="mock_env_node",
+                output="screen",
+                parameters=[
+                    {
+                        "num_pursuers": ParameterValue(num_pursuers, value_type=int),
+                        "num_evaders": ParameterValue(num_evaders, value_type=int),
+                        "dt": 0.05,
+                        "world_half_extent": 10.0,
+                        "max_speed": 3.0,
+                        "linear_drag": 0.15,
+                        "spawn_half_extent": 8.0,
+                    }
+                ],
+                condition=mock_condition,
             ),
             Node(
                 package="rl_policy",
@@ -83,15 +122,22 @@ def generate_launch_description() -> LaunchDescription:
                 output="screen",
                 parameters=[
                     {
-                        "num_pursuers": num_pursuers,
-                        "num_evaders": num_evaders,
+                        "num_pursuers": ParameterValue(num_pursuers, value_type=int),
+                        "num_evaders": ParameterValue(num_evaders, value_type=int),
                         "pursuer_algo": "cbc_tp_net",
-                        "pursuer_train_mode": "train_scratch",
-                        "pursuer_weights": "",
+                        "pursuer_train_mode": pursuer_train_mode,
+                        "pursuer_weights": pursuer_weights,
                         "evader_algo": "ddpg",
                         "evader_train_mode": "eval_only",
                         "evader_weights": "",
                         "max_accel": 1.0,
+                        "capture_radius": 2.0,
+                        "collision_penalty": -2.0,
+                        "pursuer_lr": 0.0003,
+                        "discount_gamma": 0.99,
+                        "entropy_coef": 0.001,
+                        "checkpoint_dir": checkpoint_dir,
+                        "checkpoint_prefix": "pursuer_policy",
                     }
                 ],
             ),
@@ -102,11 +148,11 @@ def generate_launch_description() -> LaunchDescription:
                 output="screen",
                 parameters=[
                     {
-                        "num_pursuers": num_pursuers,
-                        "num_evaders": num_evaders,
-                        "max_episodes": 4000,
-                        "max_steps": 500,
-                        "reset_policy": 2,
+                        "num_pursuers": ParameterValue(num_pursuers, value_type=int),
+                        "num_evaders": ParameterValue(num_evaders, value_type=int),
+                        "max_episodes": ParameterValue(max_episodes, value_type=int),
+                        "max_steps": ParameterValue(max_steps, value_type=int),
+                        "reset_policy": ParameterValue(reset_policy, value_type=int),
                         "collision_penalty": -2.0,
                         "capture_radius": 2.0,
                         "capture_steps": 5,
