@@ -123,3 +123,58 @@ parameters={
 1.  **资源复用**：`agent_manager` 不再销毁模型，仅使用 Gazebo 服务覆盖位姿和速度（Twist=0），解决了 ROS 2 频繁生成/销毁实体可能导致的 DDS 通信死锁问题。
 2.  **防卡墙机制**：`world_manager` 会先发布带有体积参数的障碍物列表；`agent_manager` 订阅此列表，在随机采样 $(x_0, y_0)$ 时计算离所有边界的最短距离，若 `< safe_spawn_distance` 则重新采样，确保生成合法。
 3.  **模型训练灵活性**：通过增加 `train_mode` 细分状态，现在可以轻松实现“双盲训练”（都从头训练）、“打怪升级”（加载强力逃跑者训练追捕者）、“策略评估”（双方均 eval）等完全符合论文复现要求的消融实验（Ablation Study）配置。
+
+
+## 5\. gazebo与ros2桥接
+
+### 1. 获取 `/agent_{i}/odom` (位置和速度信息)
+
+在 Gazebo Harmonic 中，需要让无人机模型主动对外广播其位姿和速度。
+
+**在 Gazebo 的 SDF 模型文件中添加插件**
+在合适的位置放置 `pursuer.sdf` 和 `evader.sdf` ，并添加里程计发布插件：
+如：
+```xml
+<plugin
+  filename="gz-sim-odometry-publisher-system"
+  name="gz::sim::systems::OdometryPublisher">
+  <odom_frame>world</odom_frame>
+  <robot_base_frame>pursuer_0/base_link</robot_base_frame>
+  <odom_publish_frequency>50</odom_publish_frequency> </plugin>
+```
+
+**使用 `ros_gz_bridge` 建立映射**
+Gazebo 会在类似于 `/model/pursuer_0/odometry` 的话题上发布原生的 `gz.msgs.Odometry` 消息。
+通过ros_gz_bridge桥接，强化学习节点就可以直接订阅 ROS 2 的 `/model/pursuer_0/odometry`（可以重映射为 `/agent_0/odom`）来提取当前的 $(x, y)$ 坐标和速度。
+
+---
+
+### 2. 获取 `/agent_{i}/collision` (碰撞检测)
+
+强化学习需要知道无人机何时撞到建筑物（论文中规定撞击触发 -2 的惩罚）。这就需要用到 Gazebo 的接触传感器（Contact Sensor）。
+
+**在 SDF 中定义碰撞属性和接触传感器**
+在无人机的机身 `link` 的 `<collision>` 标签内，添加一个接触传感器插件：
+
+```xml
+<collision name="base_collision">
+  <geometry>
+    <box><size>0.3 0.3 0.1</size></box> </geometry>
+</collision>
+
+<sensor name="contact_sensor" type="contact">
+  <always_on>true</always_on>
+  <update_rate>50</update_rate>
+  <contact>
+    <collision>base_collision</collision>
+  </contact>
+</sensor>
+
+<plugin filename="gz-sim-contact-system" name="gz::sim::systems::Contact"/>
+```
+
+**使用 `ros_gz_bridge` 桥接接触消息**
+Gazebo 会发布 `gz.msgs.Contacts` 消息，桥接后的数据需要做简单转换并重映射为/agent_{i}/collision
+
+### 3.追捕成功的判定
+不在gazebo实现，而是在 training_coordinator_node 中实现，因为它已经订阅了所有智能体的 /agent_{i}/odom 来构建状态空间 (Observation) 和计算奖励 (Reward)，它拥有判定 Done 所需的全部上下文。
