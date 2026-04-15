@@ -1,0 +1,119 @@
+<?xml version="1.0"?>
+<sdf version="1.9">
+  <world name="urban">
+    <gravity>0 0 -9.8</gravity>
+
+    <plugin filename="gz-sim-physics-system" name="gz::sim::systems::Physics"/>
+    <plugin filename="gz-sim-scene-broadcaster-system" name="gz::sim::systems::SceneBroadcaster"/>
+    <plugin filename="gz-sim-user-commands-system" name="gz::sim::systems::UserCommands"/>
+    <plugin filename="gz-sim-sensors-system" name="gz::sim::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+    <plugin filename="gz-sim-contact-system" name="gz::sim::systems::Contact"/>
+
+    <light type="directional" name="sun">
+      <pose>0 0 30 0 0 0</pose>
+      <cast_shadows>true</cast_shadows>
+      <diffuse>1.0 1.0 1.0 1.0</diffuse>
+      <specular>0.2 0.2 0.2 1.0</specular>
+      <direction>-0.2 0.1 -1</direction>
+    </light>
+
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>80 80</size>
+            </plane>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>80 80</size>
+            </plane>
+          </geometry>
+          <material>
+            <ambient>0.7 0.7 0.7 1</ambient>
+            <diffuse>0.7 0.7 0.7 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="building_0">
+      <static>true</static>
+      <pose>-5.0 -1.5 1.0 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>2.0 2.0 2.0</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>2.0 2.0 2.0</size></box></geometry>
+          <material><ambient>0.45 0.45 0.50 1</ambient><diffuse>0.45 0.45 0.50 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="building_1">
+      <static>true</static>
+      <pose>-0.5 3.0 1.2 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>1.5 2.4 2.4</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>1.5 2.4 2.4</size></box></geometry>
+          <material><ambient>0.50 0.50 0.58 1</ambient><diffuse>0.50 0.50 0.58 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="building_2">
+      <static>true</static>
+      <pose>3.2 -2.3 0.9 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>2.2 1.8 1.8</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>2.2 1.8 1.8</size></box></geometry>
+          <material><ambient>0.55 0.52 0.47 1</ambient><diffuse>0.55 0.52 0.47 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="building_3">
+      <static>true</static>
+      <pose>5.5 4.2 1.1 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>1.8 2.2 2.2</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>1.8 2.2 2.2</size></box></geometry>
+          <material><ambient>0.40 0.45 0.50 1</ambient><diffuse>0.40 0.45 0.50 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="building_4">
+      <static>true</static>
+      <pose>0.0 -5.5 0.7 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>3.0 1.4 1.4</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>3.0 1.4 1.4</size></box></geometry>
+          <material><ambient>0.48 0.42 0.45 1</ambient><diffuse>0.48 0.42 0.45 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+  </world>
+</sdf>

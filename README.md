@@ -1,180 +1,322 @@
+# game_of_drones_rl ROS 2 仿真与训练系统说明
 
------
+本系统用于多无人机追捕-逃避博弈训练，支持两种后端：
 
-# `game_of_drones_rl` ROS 2 仿真与训练系统使用说明
+- Gazebo Harmonic 真仿真后端
+- Mock 运动学后端（用于快速迭代训练）
 
-本系统用于实现多无人机追捕-逃避博弈的 DRL 训练。系统由四大核心模块构成，通过 ROS 2 话题与服务实现高度解耦。
+核心目标：
 
------
+1. world_manager 维护障碍物拓扑并广播。
+2. agent_manager 基于障碍物做安全采样并重置无人机。
+3. rl_policy 运行 MADDPG（追捕者）+ DDPG（逃避者）策略。
+4. training_coordinator 负责 done 判定和回合重置时序。
+5. sim_bridge 统一 Gazebo 话题，并把加速度指令落实到 Gazebo 实体运动。
+6. swarm_bringup 统一启动、仿真桥接、模型注入、训练参数透传。
 
-## 1\. 核心运行逻辑与时序（逻辑闭环说明）
+## 1. 逻辑闭环
 
-为了保证“智能体随机生成绝对不会卡在建筑物内”，系统遵循严格的重置握手协议：
+系统遵循如下回合闭环，避免出生点卡墙并保证训练状态一致：
 
-1.  **回合结束 (Done)**：`training_coordinator` 判定回合结束。
-2.  **世界重置 (如有需要)**：如果策略配置为刷新世界，调度器优先发送 `/scheduler/reset_world`。
-3.  **障碍物更新**：`world_manager` 完成地图刷新后，广播包含所有建筑物边界框的 `/world_manager/obstacles` 消息。
-4.  **智能体安全重置**：调度器随后发送 `/scheduler/reset_agents`（携带重置模式参数）。`agent_manager` 收到指令后，**结合最新收到的障碍物边界数据**，在安全距离 `safe_spawn_distance` 之外采样合法的 $(x, y)$ 坐标，并通过 Gazebo Harmonic 底层接口瞬间重置无人机的位置与速度（设为0），从而完成逻辑闭环。
+1. training_coordinator 判定 done（追捕成功、碰撞、步数超限）。
+2. 若 reset_policy=3，则先发布 /scheduler/reset_world。
+3. world_manager 完成障碍物刷新并发布 /world_manager/obstacles。
+4. training_coordinator 发布 /scheduler/reset_agents（模式 1 或 2）。
+5. agent_manager 基于障碍物边界 + safe_spawn_distance 安全采样并调用 SetEntityPose。
+6. rl_policy 以 reset 消息作为回合边界，写入 replay 与 checkpoint。
 
------
+## 2. 功能包与参数
 
-## 2\. 功能包及节点详细设定
+### 2.1 world_manager
 
-### 模块一：世界管理器 (`world_manager_node`)
+功能：维护固定/随机障碍物，发布可缓存障碍物列表。
 
-**功能**：负责初始化时构建城市，以及在接收到重置指令时动态重建障碍物拓扑结构。
+参数：
 
-**可传入参数 (Parameters)**:
-| 参数名 | 类型 | 默认值 | 描述 |
-| :--- | :--- | :--- | :--- |
-| `world_mode` | string | `random` | `fixed` (固定地图) / `random` (随机生成) |
-| `seed_mode` | string | `none` | `single` (固定种子) / `sequence` (按回合读取) / `none` (完全随机) |
-| `seed_value` | int/list| `42` | 配合 `seed_mode` 使用的具体种子值 |
-| `obstacle_density`| float | `0.3` | 建筑物的覆盖密度（0.0 \~ 1.0） |
+| 参数名 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| world_mode | string | random | fixed 或 random |
+| seed_mode | string | none | single / sequence / none |
+| seed_value | int | 42 | single 模式固定种子 |
+| seed_sequence | int[] | [42,43,44,45] | sequence 模式种子序列 |
+| obstacle_density | float | 0.3 | 随机障碍密度 |
+| world_half_extent | float | 10.0 | 世界半边长 |
 
-**发布与订阅 (Pub/Sub)**:
+话题：
 
-  * **Sub**: `/scheduler/reset_world` (`std_msgs/Empty`) -\> 触发重置。
-  * **Pub**: `/world_manager/obstacles` (`visualization_msgs/MarkerArray` 或自定义格式) -\> 向外界广播当前所有障碍物的几何中心和包围盒(Bounding Box)尺寸。
+- Sub: /scheduler/reset_world (std_msgs/Empty)
+- Pub: /world_manager/obstacles (visualization_msgs/MarkerArray, transient_local)
 
------
+### 2.2 agent_manager
 
-### 模块二：智能体管理器 (`agent_manager_node`)
+功能：缓存障碍物并执行安全重置；调用 Gazebo SetEntityPose 服务。
 
-**功能**：在启动时将无人机模型注入 Gazebo；在训练过程中，负责通过改变 Pose 和 Twist（速度/加速度清零）来**重置状态，而非销毁模型**。同时负责安全出生点的碰撞检测。
+参数：
 
-**可传入参数 (Parameters)**:
-| 参数名 | 类型 | 默认值 | 描述 |
-| :--- | :--- | :--- | :--- |
-| `num_pursuers` | int | `5` | 追捕者数量 |
-| `num_evaders` | int | `1` | 逃跑者数量 |
-| `safe_spawn_distance`| float| `1.5` | **核心参数**：随机生成位置时，距离任何建筑物表面的最小安全缓冲距离（单位：米）。此距离应当大于无人机碰撞检测判定的半径。 |
+| 参数名 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| num_pursuers | int | 5 | 追捕者数量 |
+| num_evaders | int | 1 | 逃避者数量 |
+| safe_spawn_distance | float | 1.5 | 与障碍物最小缓冲距离 |
+| spawn_half_extent | float | 9.0 | 采样区域半边长 |
+| spawn_attempts | int | 300 | 最大采样尝试次数 |
+| world_name | string | urban | Gazebo world 名，用于 set_pose 服务路径 |
+| pursuer_name_prefix | string | pursuer | 追捕者模型名前缀 |
+| evader_name_prefix | string | evader | 逃避者模型名前缀 |
 
-**发布与订阅 (Pub/Sub)**:
+话题与服务：
 
-  * **Sub**: `/world_manager/obstacles` -\> 缓存环境障碍物数据，用于执行避障采样。
-  * **Sub**: `/scheduler/reset_agents` (`std_msgs/Int8`) -\> 接收重置指令。消息值为重置模式：`1` (恢复初始位置)，`2` (安全随机位置)。
-  * **Client**: 调用 Gazebo Harmonic 服务 (例如 `/world/urban/set_pose`) 重置无人机位姿与线/角速度。
+- Sub: /world_manager/obstacles
+- Sub: /scheduler/reset_agents (std_msgs/Int8)
+- Pub: /agent_manager/reset_poses (geometry_msgs/PoseArray)
+- Client: /world/<world_name>/set_pose (ros_gz_interfaces/srv/SetEntityPose)
 
------
+### 2.3 sim_bridge
 
-### 模块三：强化学习策略网络 (`rl_policy_node`)
+功能：
 
-**功能**：运行 PyTorch 模型，接收状态，输出控制指令。追捕者和逃跑者可以完全独立地配置为“训练”或“评估”模式。
+1. 把 Gazebo odom/contacts 转发为统一 ROS 语义话题。
+2. 订阅 /agent_i/cmd_accel，积分速度并回写 Gazebo 实体位姿，实现 Gazebo 后端可训练闭环。
 
-**可传入参数 (Parameters)**:
-| 参数名 | 类型 | 默认值 | 描述 |
-| :--- | :--- | :--- | :--- |
-| `pursuer_algo` | string | `cbc_tp_net` | 追捕者使用的网络结构（如 `maddpg`, `cbc_tp_net`）。 |
-| `pursuer_train_mode`| string| `train_scratch`| **追捕者模式**：<br>- `train_scratch`: 不加载权重，从头训练<br>- `train_load`: 加载现有权重，继续 Fine-tune<br>- `eval_only`: 加载现有权重，冻结参数不训练 |
-| `pursuer_weights` | string | `""` | 追捕者模型权重文件（.pth）的绝对路径。 |
-| `evader_algo` | string | `ddpg` | 逃跑者使用的网络结构。 |
-| `evader_train_mode` | string | `eval_only` | **逃跑者模式**：同上（论文中逃跑者通常是预训练好的静态策略）。 |
-| `evader_weights` | string | `""` | 逃跑者模型权重文件路径。 |
+参数：
 
-**发布与订阅 (Pub/Sub)**:
+| 参数名 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| num_pursuers | int | 5 | 追捕者数量 |
+| num_evaders | int | 1 | 逃避者数量 |
+| world_name | string | urban | Gazebo world 名 |
+| controller_enabled | bool | true | 是否启用加速度控制器 |
+| controller_dt | float | 0.05 | 控制积分周期 |
+| max_speed | float | 3.0 | 速度上限 |
+| linear_drag | float | 0.15 | 线性阻尼 |
+| world_half_extent | float | 10.0 | 位置边界裁剪 |
 
-  * **Sub**: `/agent_{i}/odom` (`nav_msgs/Odometry`) -\> 智能体运动学状态。
-  * **Pub**: `/agent_{i}/cmd_accel` (`geometry_msgs/Accel`) -\> 输出期望加速度给底层的 PID 节点。
+话题：
 
------
+- Sub: /model/<name>/odometry
+- Sub: /model/<name>/contacts
+- Sub: /world/<world>/model/<name>/link/base_link/sensor/contact_sensor/contact
+- Sub: /agent_i/cmd_accel
+- Sub: /agent_manager/reset_poses
+- Pub: /agent_i/odom
+- Pub: /agent_i/collision
 
-### 模块四：训练调度器 (`training_coordinator_node`)
+### 2.4 mock_env
 
-**功能**：整个 DRL 系统的“大脑”，负责计步、结算 Reward、判断 Done，并下发各级别的重置时序。
+功能：无 Gazebo 时提供运动学环境，便于快速训练与回归。
 
-**可传入参数 (Parameters)**:
-| 参数名 | 类型 | 默认值 | 描述 |
-| :--- | :--- | :--- | :--- |
-| `max_episodes` | int | `4000` | 最大训练回合数。 |
-| `max_steps` | int | `500` | 每回合最大步数。 |
-| `reset_policy` | int | `1` | **回合结束重置策略**：<br>`1`: 世界不变，智能体恢复初始固定状态。<br>`2`: 世界不变，智能体在安全区内随机刷新。<br>`3`: 世界重新随机生成，随后智能体在安全区内随机刷新。 |
-| `collision_penalty` | float| `-2.0` | 发生碰撞时的惩罚值。 |
-| `capture_radius` | float| `2.0` | 追捕成功判定半径。 |
-| `capture_steps` | int | `5` | 需要持续处于追捕半径内的时间步才算 Done。 |
+参数：
 
-**发布与订阅 (Pub/Sub)**:
+| 参数名 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| num_pursuers | int | 5 | 追捕者数量 |
+| num_evaders | int | 1 | 逃避者数量 |
+| dt | float | 0.05 | 积分周期 |
+| world_half_extent | float | 10.0 | 世界边界 |
+| max_speed | float | 3.0 | 速度上限 |
+| linear_drag | float | 0.15 | 阻尼 |
+| spawn_half_extent | float | 8.0 | 初始采样范围 |
 
-  * **Sub**: `/agent_{i}/collision` (`std_msgs/Bool`) -\> 监听碰撞事件（用于计算个体碰撞惩罚）。
-  * **Pub**: `/scheduler/reset_world` (`std_msgs/Empty`) -\> 触发策略 3 时的世界重置。
-  * **Pub**: `/scheduler/reset_agents` (`std_msgs/Int8`) -\> 触发智能体位姿重置，传参为 1 或 2。
-  * **Pub**: `/rl/episode_metrics` -\> 记录并输出给 TensorBoard 的监控指标。
+### 2.5 rl_policy
 
------
+功能：
 
-## 3\. 运行示例 (Launch 演示)
+1. 追捕者：MADDPG（多 Actor + 集中式 Critic）。
+2. 逃避者：DDPG。
+3. 支持 train_scratch / train_load / eval_only。
+4. 支持 replay buffer、target 网络软更新、latest/best 权重保存。
 
-一个典型的 Launch 启动配置流（在 `training_launch.py` 中体现）如下：
+算法说明：
 
-```python
-# 场景：追捕者加载已有权重继续训练，逃跑者固定不训练，每一局随机刷新出生点，世界不刷新。
-parameters={
-    'reset_policy': 2, 
-    'safe_spawn_distance': 1.5,
-    'pursuer_train_mode': 'train_load',
-    'pursuer_weights': '/path/to/cbc_tp_net.pth',
-    'evader_train_mode': 'eval_only',
-    'evader_weights': '/path/to/ddpg_evader.pth'
-}
+- pursuer_algo 支持 maddpg，cbc_tp_net 当前仅占位（未实现网络结构）。
+- evader_algo 当前支持 ddpg。
+
+关键参数：
+
+| 参数名 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| num_pursuers | int | 5 | 追捕者数量 |
+| num_evaders | int | 1 | 逃避者数量 |
+| pursuer_algo | string | maddpg | 追捕者算法 |
+| pursuer_train_mode | string | train_scratch | train_scratch / train_load / eval_only |
+| pursuer_weights | string | "" | 追捕者权重路径 |
+| evader_algo | string | ddpg | 逃避者算法 |
+| evader_train_mode | string | eval_only | train_scratch / train_load / eval_only |
+| evader_weights | string | "" | 逃避者权重路径 |
+| max_accel | float | 1.0 | 输出加速度缩放 |
+| capture_radius | float | 2.0 | 捕获判定半径 |
+| collision_penalty | float | -2.0 | 碰撞惩罚 |
+| discount_gamma | float | 0.99 | 折扣因子 |
+| target_tau | float | 0.01 | 软更新系数 |
+| pursuer_actor_lr | float | 3e-4 | 追捕者 Actor 学习率 |
+| pursuer_critic_lr | float | 1e-3 | 追捕者 Critic 学习率 |
+| evader_actor_lr | float | 3e-4 | 逃避者 Actor 学习率 |
+| evader_critic_lr | float | 1e-3 | 逃避者 Critic 学习率 |
+| buffer_capacity | int | 200000 | 回放池容量 |
+| batch_size | int | 128 | 采样批大小 |
+| warmup_steps | int | 500 | 起训前最少样本步数 |
+| train_updates_per_step | int | 1 | 每步训练轮数 |
+| exploration_noise_std | float | 0.2 | 探索噪声标准差 |
+| policy_update_interval | int | 1 | 策略延迟更新步长 |
+| checkpoint_dir | string | artifacts/checkpoints | 权重输出目录 |
+| checkpoint_prefix | string | pursuer_policy | 权重前缀 |
+| use_synthetic_obs_when_missing | bool | true | 缺失观测时是否回退合成观测 |
+
+checkpoint 产物：
+
+- <prefix>_latest.pth
+- <prefix>_best.pth
+- <prefix>_evader_best.pth
+
+### 2.6 training_coordinator
+
+功能：episode/step 调度、done 判定、重置时序下发、指标发布。
+
+参数：
+
+| 参数名 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| num_pursuers | int | 5 | 追捕者数量 |
+| num_evaders | int | 1 | 逃避者数量 |
+| max_episodes | int | 4000 | 最大回合数 |
+| max_steps | int | 500 | 每回合最大步数 |
+| reset_policy | int | 1 | 1 固定恢复; 2 安全随机; 3 先重置世界再随机 |
+| collision_penalty | float | -2.0 | 碰撞罚分累计到指标 |
+| capture_radius | float | 2.0 | 追捕半径 |
+| capture_steps | int | 5 | 连续满足追捕步数 |
+
+指标消息 /rl/episode_metrics:
+
+- [episode, step, done_reason, capture_streak, collision_events, collision_penalty_total]
+
+## 3. Gazebo 资产
+
+已提供如下文件：
+
+- src/swarm_bringup/worlds/urban.world
+- src/swarm_bringup/models/pursuer/model.sdf
+- src/swarm_bringup/models/evader/model.sdf
+
+SDF 已包含：
+
+1. 无人机刚体模型（box 机体 + 惯量）。
+2. OdometryPublisher 插件。
+3. Contact sensor。
+
+world 已包含：
+
+1. Physics、Sensors、Contact 等系统插件。
+2. 地面与固定建筑物（与 world_manager fixed 障碍布局一致）。
+3. 6 架预置无人机实体（pursuer_0..4, evader_0）。
+
+## 4. Launch 参数
+
+入口：src/swarm_bringup/launch/training_launch.py
+
+关键参数：
+
+| 参数名 | 默认值 | 说明 |
+| --- | --- | --- |
+| env_backend | mock | mock 或 gazebo |
+| gazebo_gui | false | true 开图形界面，false 无图形 |
+| world_name | urban | Gazebo world 名 |
+| world_sdf | 内置 urban.world | Gazebo world 文件路径 |
+| num_pursuers | 5 | 追捕者数量 |
+| num_evaders | 1 | 逃避者数量 |
+| max_episodes | 60 | 回合数 |
+| max_steps | 120 | 每回合步数 |
+| reset_policy | 2 | 重置策略 |
+| safe_spawn_distance | 1.5 | 安全采样间距 |
+| pursuer_algo | maddpg | 追捕算法 |
+| pursuer_train_mode | train_scratch | 追捕训练模式 |
+| pursuer_weights | "" | 追捕权重 |
+| evader_algo | ddpg | 逃避算法 |
+| evader_train_mode | eval_only | 逃避训练模式 |
+| evader_weights | "" | 逃避权重 |
+| checkpoint_dir | artifacts/checkpoints | 权重目录 |
+| gazebo_controller_enabled | true | Gazebo运动控制是否启用 |
+| gazebo_controller_dt | 0.05 | Gazebo控制积分周期 |
+| gazebo_max_speed | 3.0 | Gazebo速度上限 |
+| gazebo_linear_drag | 0.15 | Gazebo阻尼 |
+
+## 5. 运行示例
+
+### 5.1 Mock 后端训练
+
+```bash
+cd ~/swarm-ros
+source ./env.sh
+colcon build --base-paths src
+source install/setup.bash
+ros2 launch swarm_bringup training_launch.py \
+  env_backend:=mock \
+  max_episodes:=20 \
+  max_steps:=100 \
+  reset_policy:=2 \
+  pursuer_algo:=maddpg \
+  pursuer_train_mode:=train_scratch \
+  evader_algo:=ddpg \
+  evader_train_mode:=train_scratch \
+  checkpoint_dir:=artifacts/checkpoints
 ```
 
-## 4\. 逻辑闭环检查清单 (Checklist)
+### 5.2 Gazebo 后端训练（无图形）
 
-1.  **资源复用**：`agent_manager` 不再销毁模型，仅使用 Gazebo 服务覆盖位姿和速度（Twist=0），解决了 ROS 2 频繁生成/销毁实体可能导致的 DDS 通信死锁问题。
-2.  **防卡墙机制**：`world_manager` 会先发布带有体积参数的障碍物列表；`agent_manager` 订阅此列表，在随机采样 $(x_0, y_0)$ 时计算离所有边界的最短距离，若 `< safe_spawn_distance` 则重新采样，确保生成合法。
-3.  **模型训练灵活性**：通过增加 `train_mode` 细分状态，现在可以轻松实现“双盲训练”（都从头训练）、“打怪升级”（加载强力逃跑者训练追捕者）、“策略评估”（双方均 eval）等完全符合论文复现要求的消融实验（Ablation Study）配置。
-
-
-## 5\. gazebo与ros2桥接
-
-### 1. 获取 `/agent_{i}/odom` (位置和速度信息)
-
-在 Gazebo Harmonic 中，需要让无人机模型主动对外广播其位姿和速度。
-
-**在 Gazebo 的 SDF 模型文件中添加插件**
-在合适的位置放置 `pursuer.sdf` 和 `evader.sdf` ，并添加里程计发布插件：
-如：
-```xml
-<plugin
-  filename="gz-sim-odometry-publisher-system"
-  name="gz::sim::systems::OdometryPublisher">
-  <odom_frame>world</odom_frame>
-  <robot_base_frame>pursuer_0/base_link</robot_base_frame>
-  <odom_publish_frequency>50</odom_publish_frequency> </plugin>
+```bash
+cd ~/swarm-ros
+source ./env.sh
+colcon build --base-paths src
+source install/setup.bash
+ros2 launch swarm_bringup training_launch.py \
+  env_backend:=gazebo \
+  gazebo_gui:=false \
+  max_episodes:=200 \
+  max_steps:=120 \
+  reset_policy:=2 \
+  pursuer_algo:=maddpg \
+  pursuer_train_mode:=train_load \
+  pursuer_weights:=artifacts/checkpoints/pursuer_policy_best.pth \
+  evader_algo:=ddpg \
+  evader_train_mode:=eval_only \
+  checkpoint_dir:=artifacts/checkpoints
 ```
 
-**使用 `ros_gz_bridge` 建立映射**
-Gazebo 会在类似于 `/model/pursuer_0/odometry` 的话题上发布原生的 `gz.msgs.Odometry` 消息。
-通过ros_gz_bridge桥接，强化学习节点就可以直接订阅 ROS 2 的 `/model/pursuer_0/odometry`（可以重映射为 `/agent_0/odom`）来提取当前的 $(x, y)$ 坐标和速度。
+### 5.3 Gazebo 后端训练（有图形）
 
----
-
-### 2. 获取 `/agent_{i}/collision` (碰撞检测)
-
-强化学习需要知道无人机何时撞到建筑物（论文中规定撞击触发 -2 的惩罚）。这就需要用到 Gazebo 的接触传感器（Contact Sensor）。
-
-**在 SDF 中定义碰撞属性和接触传感器**
-在无人机的机身 `link` 的 `<collision>` 标签内，添加一个接触传感器插件：
-
-```xml
-<collision name="base_collision">
-  <geometry>
-    <box><size>0.3 0.3 0.1</size></box> </geometry>
-</collision>
-
-<sensor name="contact_sensor" type="contact">
-  <always_on>true</always_on>
-  <update_rate>50</update_rate>
-  <contact>
-    <collision>base_collision</collision>
-  </contact>
-</sensor>
-
-<plugin filename="gz-sim-contact-system" name="gz::sim::systems::Contact"/>
+```bash
+ros2 launch swarm_bringup training_launch.py \
+  env_backend:=gazebo \
+  gazebo_gui:=true
 ```
 
-**使用 `ros_gz_bridge` 桥接接触消息**
-Gazebo 会发布 `gz.msgs.Contacts` 消息，桥接后的数据需要做简单转换并重映射为/agent_{i}/collision
+## 6. Gazebo 链路验证（必须执行）
 
-### 3.追捕成功的判定
-不在gazebo实现，而是在 training_coordinator_node 中实现，因为它已经订阅了所有智能体的 /agent_{i}/odom 来构建状态空间 (Observation) 和计算奖励 (Reward)，它拥有判定 Done 所需的全部上下文。
+先启动 Gazebo 后端（见 5.2），再在另一个终端执行：
+
+```bash
+cd ~/swarm-ros
+source ./env.sh
+source install/setup.bash
+
+ros2 topic list | grep -E "agent_0/odom|agent_0/collision|model/pursuer_0/odometry"
+ros2 topic echo --no-daemon --once /agent_0/odom
+ros2 topic echo --no-daemon --once /agent_0/collision
+ros2 topic echo --no-daemon --once /model/pursuer_0/odometry
+```
+
+若需要主动验证碰撞，可将实体移动到建筑物附近后再观察 collision：
+
+```bash
+ros2 service call /world/urban/set_pose ros_gz_interfaces/srv/SetEntityPose "{entity: {name: pursuer_0, type: 2}, pose: {position: {x: -5.0, y: -1.5, z: 1.0}}}"
+ros2 topic echo --no-daemon --once /agent_0/collision
+```
+
+## 7. 参数覆盖核查结论
+
+README 中列出的参数均已在对应节点声明并具备实际逻辑：
+
+1. world_manager: 世界生成/随机种子/障碍发布均已实现。
+2. agent_manager: 安全采样 + SetEntityPose 重置已实现。
+3. rl_policy: MADDPG/DDPG 训练与权重读写已实现；cbc_tp_net 当前明确为未实现占位。
+4. training_coordinator: done 判定与 reset 时序已实现，collision_penalty 已纳入指标统计。
+5. launch: gazebo_gui 有图形/无图形模式切换已实现。

@@ -31,6 +31,7 @@ class TrainingCoordinatorNode(Node):
         self.current_step = 0
         self.capture_streak = 0
         self.collision_events = 0
+        self.collision_penalty_total = 0.0
         self.odom_states: Dict[int, Odometry] = {}
 
         total_agents = self.num_pursuers + self.num_evaders
@@ -46,6 +47,8 @@ class TrainingCoordinatorNode(Node):
     def on_collision(self, _agent_id: int, msg: Bool) -> None:
         if msg.data:
             self.collision_events += 1
+            penalty = self.get_parameter("collision_penalty").get_parameter_value().double_value
+            self.collision_penalty_total += penalty
 
     def _is_capture(self) -> bool:
         capture_radius = self.get_parameter("capture_radius").get_parameter_value().double_value
@@ -71,7 +74,7 @@ class TrainingCoordinatorNode(Node):
         return False
 
     def _publish_metrics(self, done_reason: int) -> None:
-        # [episode, steps, done_reason, capture_streak, collision_events]
+        # [episode, steps, done_reason, capture_streak, collision_events, collision_penalty_total]
         msg = Float32MultiArray()
         msg.data = [
             float(self.current_episode),
@@ -79,6 +82,7 @@ class TrainingCoordinatorNode(Node):
             float(done_reason),
             float(self.capture_streak),
             float(self.collision_events),
+            float(self.collision_penalty_total),
         ]
         self.metrics_pub.publish(msg)
 
@@ -125,6 +129,7 @@ class TrainingCoordinatorNode(Node):
         self.current_step = 0
         self.capture_streak = 0
         self.collision_events = 0
+        self.collision_penalty_total = 0.0
 
 
 def main(args=None) -> None:
