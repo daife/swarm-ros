@@ -91,6 +91,7 @@ def generate_launch_description() -> LaunchDescription:
     exploration_noise_std = LaunchConfiguration("exploration_noise_std")
     policy_update_interval = LaunchConfiguration("policy_update_interval")
     use_synthetic_obs_when_missing = LaunchConfiguration("use_synthetic_obs_when_missing")
+    torch_device = LaunchConfiguration("torch_device")
     world_half_extent = LaunchConfiguration("world_half_extent")
     spawn_half_extent = LaunchConfiguration("spawn_half_extent")
     spawn_attempts = LaunchConfiguration("spawn_attempts")
@@ -175,6 +176,7 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("exploration_noise_std", default_value="0.2"),
             DeclareLaunchArgument("policy_update_interval", default_value="1"),
             DeclareLaunchArgument("use_synthetic_obs_when_missing", default_value="true"),
+            DeclareLaunchArgument("torch_device", default_value="auto"),
             DeclareLaunchArgument("world_half_extent", default_value="10.0"),
             DeclareLaunchArgument("spawn_half_extent", default_value="9.0"),
             DeclareLaunchArgument("spawn_attempts", default_value="300"),
@@ -346,6 +348,7 @@ def generate_launch_description() -> LaunchDescription:
                             use_synthetic_obs_when_missing,
                             value_type=bool,
                         ),
+                        "torch_device": torch_device,
                         "checkpoint_dir": checkpoint_dir,
                         "checkpoint_prefix": checkpoint_prefix,
                     }

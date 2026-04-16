@@ -27,6 +27,12 @@
 3. `PURSUER_WEIGHTS` / `EVADER_WEIGHTS`
 4. `MAX_EPISODES` / `MAX_STEPS`
 5. `CHECKPOINT_DIR`
+6. `TORCH_DEVICE`（`auto/cpu/cuda/cuda:0`）
+
+边界参数注意：
+
+1. `WORLD_HALF_EXTENT` 需要与 world 文件中的实际围墙一致（`urban.world` 建议保持 `10.0`）。
+2. `AGENT_STAGING_X/Y`、`OBSTACLE_STAGING_X/Y` 建议放在边界外，避免与训练区混淆。
 
 ## 1. 一键启动（推荐）
 

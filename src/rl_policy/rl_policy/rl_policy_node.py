@@ -106,6 +106,7 @@ class RLPolicyNode(Node):
         self.declare_parameter("checkpoint_dir", "artifacts/checkpoints")
         self.declare_parameter("checkpoint_prefix", "pursuer_policy")
         self.declare_parameter("use_synthetic_obs_when_missing", True)
+        self.declare_parameter("torch_device", "auto")
 
         self.num_pursuers = self.get_parameter("num_pursuers").get_parameter_value().integer_value
         self.num_evaders = self.get_parameter("num_evaders").get_parameter_value().integer_value
@@ -157,10 +158,37 @@ class RLPolicyNode(Node):
         self.step_counter_for_policy_delay = 0
         self.local_episode_step_count = 0
 
-        self.device = torch.device("cpu") if torch else None
+        self.device = self._select_torch_device()
         self._init_models()
 
         self.create_timer(0.1, self.control_tick)
+
+    def _select_torch_device(self):
+        if torch is None:
+            return None
+
+        requested = self.get_parameter("torch_device").get_parameter_value().string_value.strip().lower()
+        if requested in {"", "auto"}:
+            requested = "cuda" if torch.cuda.is_available() else "cpu"
+
+        try:
+            device = torch.device(requested)
+        except Exception:
+            self.get_logger().warning(f"Invalid torch_device={requested}, fallback to cpu")
+            device = torch.device("cpu")
+
+        if device.type == "cuda" and not torch.cuda.is_available():
+            self.get_logger().warning("torch_device requests CUDA but CUDA is unavailable, fallback to cpu")
+            device = torch.device("cpu")
+
+        if device.type == "cuda":
+            gpu_name = torch.cuda.get_device_name(device)
+            self.get_logger().info(f"RL torch device: {device} ({gpu_name})")
+            torch.backends.cudnn.benchmark = True
+        else:
+            self.get_logger().info("RL torch device: cpu")
+
+        return device
 
     def _init_models(self) -> None:
         self.pursuer_training_enabled = self.pursuer_train_mode in {"train_scratch", "train_load"}

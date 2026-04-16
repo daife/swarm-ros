@@ -29,6 +29,16 @@
 
 ## 2. 功能包与参数
 
+单位说明（SI）：
+
+1. 位置与长度相关参数（例如 `world_half_extent`、`spawn_half_extent`、`capture_radius`、`fixed_z`）单位是米（m）。
+2. 线速度参数（例如 `gazebo_max_speed`）单位是米每秒（m/s）。
+3. 加速度参数（例如 `max_accel`）单位是米每二次方秒（m/s²）。
+4. 时间参数（例如 `controller_dt`、`initial_reset_delay_sec`）单位是秒（s）。
+5. `linear_drag` 在当前离散模型中按 `v = v * (1 - drag * dt)` 使用，量纲对应 1/s。
+
+说明：Gazebo 世界坐标默认遵循米制，`geometry_msgs/Accel` 与 `nav_msgs/Odometry` 的线速度/加速度字段也按 SI 语义使用。
+
 ### 2.1 world_manager
 
 功能：维护固定/随机障碍物，发布可缓存障碍物列表。
@@ -74,6 +84,7 @@
 6. `world_half_extent`:
   - 世界边界为 `[-world_half_extent, +world_half_extent]`。
   - 建议与 `spawn_half_extent`、`sim_bridge.world_half_extent` 保持一致或前者更小。
+  - 必须与 world 文件中的实际围墙匹配。以 `urban.world` 为例，围墙中心在 `±10.1` 且墙厚 `0.2`，可用内边界约为 `±10.0`，因此 `world_half_extent` 建议保持 `10.0`。
 
 话题：
 
@@ -121,6 +132,8 @@
   - 必须与 Gazebo 实际 world 名一致，否则 `create/set_pose` 会失败。
 6. `pursuer_name_prefix` / `evader_name_prefix`:
   - agent_manager 会按此前缀在启动时生成模型（如 `pursuer_0`、`evader_0`），初始位于 staging。
+7. `agent_staging_x/y`:
+  - staging 坐标应设置在世界边界之外（例如 `|x|` 或 `|y| > world_half_extent + 1.0`），避免将“待入场”模型误认为训练区内实体。
 
 话题与服务：
 
@@ -236,6 +249,7 @@
 | checkpoint_dir | string | artifacts/checkpoints | 权重输出目录 |
 | checkpoint_prefix | string | pursuer_policy | 权重前缀 |
 | use_synthetic_obs_when_missing | bool | true | 缺失观测时是否回退合成观测 |
+| torch_device | string | auto | RL训练设备：auto/cpu/cuda/cuda:0 |
 
 参数细化说明：
 
@@ -421,6 +435,7 @@ world 已包含：
 | initial_reset_delay_sec | 5.0 | 启动后首次 reset 延迟 |
 | reset_agents_delay_sec | 0.4 | world reset 到 agent reset 延迟 |
 | reset_grace_steps | 12 | reset 后碰撞忽略步数 |
+| torch_device | auto | RL 训练设备选择（auto/cpu/cuda/cuda:0） |
 Launch 参数细化说明：
 
 1. `gazebo_gui`:
@@ -432,5 +447,9 @@ Launch 参数细化说明：
   - 建议为实验分目录，如 `artifacts/checkpoints/exp_20260415`，避免覆盖。
 4. `gazebo_controller_*`:
   - 这组参数直接透传给 `sim_bridge` 控制器，建议与场景尺度和策略动作上限一起联调。
+5. `torch_device`:
+  - `auto`: 优先 CUDA，不可用则回退 CPU。
+  - `cpu`: 强制 CPU。
+  - `cuda` / `cuda:0`: 强制指定 GPU（若不可用会自动回退 CPU 并告警）。
 
 

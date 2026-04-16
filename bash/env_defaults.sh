@@ -30,11 +30,11 @@ export SEED_SEQUENCE="${SEED_SEQUENCE:-[42, 100, 777, 2026]}"  # 可选: 种子�
 export OBSTACLE_DENSITY="${OBSTACLE_DENSITY:-0.9}"         # 可选: 障碍密度
 export WORLD_HALF_EXTENT="${WORLD_HALF_EXTENT:-10.0}"      # 可选: 世界半边长
 export OBSTACLE_MODEL_PACKAGE="${OBSTACLE_MODEL_PACKAGE:-swarm_bringup}"  # 可选: 障碍模型来源包
-export OBSTACLE_POOL_BOX="${OBSTACLE_POOL_BOX:-4}"         # 可选: 方形障碍池数量
-export OBSTACLE_POOL_RECT="${OBSTACLE_POOL_RECT:-4}"       # 可选: 长方体障碍池数量
-export OBSTACLE_POOL_CYLINDER="${OBSTACLE_POOL_CYLINDER:-4}"   # 可选: 圆柱障碍池数量
-export OBSTACLE_STAGING_X="${OBSTACLE_STAGING_X:-1000.0}"  # 可选: 障碍 staging 区 x
-export OBSTACLE_STAGING_Y="${OBSTACLE_STAGING_Y:-1000.0}"  # 可选: 障碍 staging 区 y
+export OBSTACLE_POOL_BOX="${OBSTACLE_POOL_BOX:-3}"         # 可选: 方形障碍池数量
+export OBSTACLE_POOL_RECT="${OBSTACLE_POOL_RECT:-3}"       # 可选: 长方体障碍池数量
+export OBSTACLE_POOL_CYLINDER="${OBSTACLE_POOL_CYLINDER:-3}"   # 可选: 圆柱障碍池数量
+export OBSTACLE_STAGING_X="${OBSTACLE_STAGING_X:-20.0}"  # 可选: 障碍 staging 区 x
+export OBSTACLE_STAGING_Y="${OBSTACLE_STAGING_Y:-20.0}"  # 可选: 障碍 staging 区 y
 export OBSTACLE_STAGING_STRIDE="${OBSTACLE_STAGING_STRIDE:-1.5}" # 可选: 障碍 staging 间距
 export OBSTACLE_SPAWN_ATTEMPTS="${OBSTACLE_SPAWN_ATTEMPTS:-400}" # 可选: 障碍布局采样尝试次数
 export OBSTACLE_MIN_CLEARANCE="${OBSTACLE_MIN_CLEARANCE:-0.2}"   # 可选: 障碍间最小间距
@@ -45,8 +45,8 @@ export SPAWN_HALF_EXTENT="${SPAWN_HALF_EXTENT:-9.0}"       # 可选: 出生采�
 export SPAWN_ATTEMPTS="${SPAWN_ATTEMPTS:-300}"             # 可选: 单个体采样最大尝试次数
 export FIXED_Z="${FIXED_Z:-1.0}"                           # 可选: z 轴固定高度
 export AGENT_MODEL_PACKAGE="${AGENT_MODEL_PACKAGE:-swarm_bringup}"  # 可选: agent 模型来源包
-export AGENT_STAGING_X="${AGENT_STAGING_X:-1000.0}"        # 可选: agent staging 区 x
-export AGENT_STAGING_Y="${AGENT_STAGING_Y:-1200.0}"        # 可选: agent staging 区 y
+export AGENT_STAGING_X="${AGENT_STAGING_X:-20.0}"        # 可选: agent staging 区 x
+export AGENT_STAGING_Y="${AGENT_STAGING_Y:-25.0}"        # 可选: agent staging 区 y
 export AGENT_STAGING_STRIDE="${AGENT_STAGING_STRIDE:-1.5}" # 可选: agent staging 间距
 
 # ---------- 22_sim_bridge_node.sh ----------
@@ -86,6 +86,7 @@ export OPTIMIZE_HORIZON_STEPS="${OPTIMIZE_HORIZON_STEPS:-120}"  # 可选: 时域
 export CHECKPOINT_DIR="${CHECKPOINT_DIR:-artifacts/checkpoints}"  # 可选: 权重保存目录
 export CHECKPOINT_PREFIX="${CHECKPOINT_PREFIX:-pursuer_policy}"     # 可选: 权重文件前缀
 export USE_SYNTHETIC_OBS_WHEN_MISSING="${USE_SYNTHETIC_OBS_WHEN_MISSING:-true}"  # 可选: 观测缺失时回退
+export TORCH_DEVICE="${TORCH_DEVICE:-auto}"               # 可选: auto/cpu/cuda/cuda:0
 
 # ---------- 24_training_coordinator_node.sh ----------
 export MAX_EPISODES="${MAX_EPISODES:-60}"                 # 可选: 最大训练回合数

@@ -46,6 +46,7 @@ LAUNCH_ARGS=(
   "exploration_noise_std:=${EXPLORATION_NOISE_STD}"
   "policy_update_interval:=${POLICY_UPDATE_INTERVAL}"
   "use_synthetic_obs_when_missing:=${USE_SYNTHETIC_OBS_WHEN_MISSING}"
+  "torch_device:=${TORCH_DEVICE}"
   "world_half_extent:=${WORLD_HALF_EXTENT}"
   "spawn_half_extent:=${SPAWN_HALF_EXTENT}"
   "spawn_attempts:=${SPAWN_ATTEMPTS}"

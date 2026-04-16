@@ -37,6 +37,7 @@ class AgentManagerNode(Node):
 		self.pending_reset_mode: Optional[int] = None
 		self.spawned: Dict[str, bool] = {}
 		self.spawn_pending: Dict[str, bool] = {}
+		self.spawn_pending_since: Dict[str, float] = {}
 
 		self.create_subscription(MarkerArray, "/world_manager/obstacles", self.on_obstacles, 10)
 		self.create_subscription(Int8, "/scheduler/reset_agents", self.on_reset_agents, 10)
@@ -123,10 +124,19 @@ class AgentManagerNode(Node):
 		return pose
 
 	def _request_spawn_if_needed(self, model_name: str, sdf_path: str, idx: int) -> bool:
+		now_sec = self.get_clock().now().nanoseconds * 1e-9
+
 		if self.spawned.get(model_name, False):
 			return True
 		if self.spawn_pending.get(model_name, False):
-			return False
+			since = self.spawn_pending_since.get(model_name, now_sec)
+			if now_sec - since <= 3.0:
+				return False
+
+			self.spawn_pending[model_name] = False
+			self.spawn_pending_since.pop(model_name, None)
+			self.get_logger().warning(f"Spawn request timeout, retrying: {model_name}")
+
 		if not self.spawn_client.wait_for_service(timeout_sec=0.02):
 			return False
 
@@ -138,9 +148,11 @@ class AgentManagerNode(Node):
 
 		future = self.spawn_client.call_async(req)
 		self.spawn_pending[model_name] = True
+		self.spawn_pending_since[model_name] = now_sec
 
 		def _on_done(done_future) -> None:
 			self.spawn_pending[model_name] = False
+			self.spawn_pending_since.pop(model_name, None)
 			try:
 				resp = done_future.result()
 				status_text = ""
@@ -245,16 +257,20 @@ class AgentManagerNode(Node):
 		return None
 
 	def _fallback_pose(self, idx: int) -> Pose:
-		# Fallback: deterministic spread near corners to reduce overlap risk.
+		# Fallback: deterministic spread near corners while respecting current world bounds.
+		world_half_extent = self.get_parameter("world_half_extent").get_parameter_value().double_value
+		collision_distance = self._collision_distance()
+		anchor = max(0.0, world_half_extent - collision_distance - 0.2)
+
 		anchors = [
-			(-8.5, -8.5),
-			(-8.5, 8.5),
-			(8.5, -8.5),
-			(8.5, 8.5),
-			(0.0, -8.5),
-			(0.0, 8.5),
-			(-8.5, 0.0),
-			(8.5, 0.0),
+			(-anchor, -anchor),
+			(-anchor, anchor),
+			(anchor, -anchor),
+			(anchor, anchor),
+			(0.0, -anchor),
+			(0.0, anchor),
+			(-anchor, 0.0),
+			(anchor, 0.0),
 		]
 		x, y = anchors[idx % len(anchors)]
 		pose = Pose()

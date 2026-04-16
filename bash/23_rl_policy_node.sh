@@ -37,6 +37,7 @@ ARGS=(
   -p "checkpoint_dir:=${CHECKPOINT_DIR}"                              # 可选: 权重保存目录
   -p "checkpoint_prefix:=${CHECKPOINT_PREFIX}"                        # 可选: 权重文件名前缀
   -p "use_synthetic_obs_when_missing:=${USE_SYNTHETIC_OBS_WHEN_MISSING}" # 可选: 启动早期缺观测回退
+  -p "torch_device:=${TORCH_DEVICE}"                                  # 可选: auto/cpu/cuda/cuda:0
 )
 
 # ros2 参数解析不接受空字符串覆写（例如 -p xxx:=）。
