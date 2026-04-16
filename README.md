@@ -369,6 +369,7 @@ world 已包含：
 2. 地面与边界墙（训练边界）。
 3. 无预置无人机实体；训练启动时由 agent_manager 动态生成到 staging（pursuer_0..4, evader_0）。
 4. 无预置障碍物；障碍由 world_manager 在 reset 时从模型池移入训练区。
+5. 为降低渲染开销，world 关闭了太阳光与阴影，改用环境光照明。
 
 ## 4. Launch 参数
 

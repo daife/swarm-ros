@@ -71,6 +71,7 @@ class WorldManagerNode(Node):
         self._pool_initialized = False
         self._published_empty_once = False
         self._spawn_pending: Dict[str, bool] = {}
+        self._spawn_pending_since: Dict[str, float] = {}
         self._spawned: Dict[str, bool] = {}
         self._last_obstacles: List[Tuple[ObstacleSpec, float, float]] = []
 
@@ -155,10 +156,19 @@ class WorldManagerNode(Node):
         return p
 
     def _request_spawn_if_needed(self, spec: ObstacleSpec) -> bool:
+        now_sec = self.get_clock().now().nanoseconds * 1e-9
+
         if self._spawned.get(spec.name, False):
             return True
         if self._spawn_pending.get(spec.name, False):
-            return False
+            since = self._spawn_pending_since.get(spec.name, now_sec)
+            if now_sec - since <= 3.0:
+                return False
+
+            self._spawn_pending[spec.name] = False
+            self._spawn_pending_since.pop(spec.name, None)
+            self.get_logger().warning(f"Spawn request timeout, retrying: {spec.name}")
+
         if not self.spawn_client.wait_for_service(timeout_sec=0.02):
             return False
 
@@ -171,9 +181,11 @@ class WorldManagerNode(Node):
 
         fut = self.spawn_client.call_async(req)
         self._spawn_pending[spec.name] = True
+        self._spawn_pending_since[spec.name] = now_sec
 
         def _done(done_future) -> None:
             self._spawn_pending[spec.name] = False
+            self._spawn_pending_since.pop(spec.name, None)
             try:
                 res = done_future.result()
                 status_text = ""
@@ -332,26 +344,33 @@ class WorldManagerNode(Node):
         self.obstacles_pub.publish(arr)
         self.get_logger().info(f"Published {len(arr.markers)} active obstacles")
 
-    def _apply_layout(self, obstacles: List[Tuple[ObstacleSpec, float, float]]) -> bool:
-        all_ready = True
-        active_names = {spec.name for spec, _, _ in obstacles}
+    def _apply_layout(
+        self,
+        obstacles: List[Tuple[ObstacleSpec, float, float]],
+    ) -> List[Tuple[ObstacleSpec, float, float]]:
+        ready_obstacles: List[Tuple[ObstacleSpec, float, float]] = []
+        pending_spawn_count = 0
 
-        for spec, _, _ in obstacles:
-            if not self._request_spawn_if_needed(spec):
-                all_ready = False
+        for spec, x, y in obstacles:
+            if self._request_spawn_if_needed(spec):
+                ready_obstacles.append((spec, x, y))
+            else:
+                pending_spawn_count += 1
 
-        if not all_ready:
-            return False
+        if not ready_obstacles:
+            return []
+
+        active_names = {spec.name for spec, _, _ in ready_obstacles}
 
         for idx, spec in enumerate(self._pool):
             if not self._spawned.get(spec.name, False):
                 continue
-            pose = self._staging_pose(idx, spec.size_z)
             if spec.name in active_names:
                 continue
+            pose = self._staging_pose(idx, spec.size_z)
             self._set_pose(spec.name, pose)
 
-        for spec, x, y in obstacles:
+        for spec, x, y in ready_obstacles:
             pose = Pose()
             pose.position.x = float(x)
             pose.position.y = float(y)
@@ -359,20 +378,25 @@ class WorldManagerNode(Node):
             pose.orientation.w = 1.0
             self._set_pose(spec.name, pose)
 
-        return True
+        if pending_spawn_count > 0:
+            self.get_logger().warning(
+                "World reset applied partially: "
+                f"{len(ready_obstacles)} ready, {pending_spawn_count} pending spawn"
+            )
+
+        return ready_obstacles
 
     def _process_pending_reset(self) -> None:
-        if not self._pool_initialized:
-            all_ready = True
-            for spec in self._pool:
-                if not self._request_spawn_if_needed(spec):
-                    all_ready = False
+        ready_count = 0
+        for spec in self._pool:
+            if self._request_spawn_if_needed(spec):
+                ready_count += 1
 
-            if not all_ready:
-                return
-
+        if not self._pool_initialized and ready_count >= max(1, self._target_count()):
             self._pool_initialized = True
-            self.get_logger().info("Obstacle pool initialized in staging area")
+            self.get_logger().info(
+                f"Obstacle pool ready for reset: {ready_count}/{len(self._pool)} available"
+            )
 
         if not self._published_empty_once:
             self._publish_obstacles([])
@@ -382,14 +406,16 @@ class WorldManagerNode(Node):
             return
 
         layout = self._compute_layout()
-        applied = self._apply_layout(layout)
-        if not applied:
+        applied_layout = self._apply_layout(layout)
+        if not applied_layout:
             return
 
-        self._last_obstacles = layout
-        self._publish_obstacles(layout)
+        self._last_obstacles = applied_layout
+        self._publish_obstacles(applied_layout)
         self._reset_pending = False
-        self.get_logger().info("World reset complete: obstacles repositioned")
+        self.get_logger().info(
+            f"World reset complete: obstacles repositioned ({len(applied_layout)}/{len(layout)})"
+        )
 
     def on_reset_world(self, _msg: Empty) -> None:
         self._world_reset_count += 1

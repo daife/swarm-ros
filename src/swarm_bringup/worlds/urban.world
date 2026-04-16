@@ -11,13 +11,11 @@
     </plugin>
     <plugin filename="gz-sim-contact-system" name="gz::sim::systems::Contact"/>
 
-    <light type="directional" name="sun">
-      <pose>0 0 30 0 0 0</pose>
-      <cast_shadows>true</cast_shadows>
-      <diffuse>1.0 1.0 1.0 1.0</diffuse>
-      <specular>0.2 0.2 0.2 1.0</specular>
-      <direction>-0.2 0.1 -1</direction>
-    </light>
+    <scene>
+      <ambient>1.0 1.0 1.0 1.0</ambient>
+      <background>0.72 0.72 0.72 1.0</background>
+      <shadows>false</shadows>
+    </scene>
 
     <model name="ground_plane">
       <static>true</static>
