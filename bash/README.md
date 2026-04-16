@@ -1,10 +1,24 @@
-# 多终端手动启动（调试用途）
+# 多终端手动启动与参数配置
 
-本目录仅用于调试节点，不是推荐训练入口。推荐入口是 `ros2 launch swarm_bringup training_launch.py`。
+本目录提供两种等效入口：
+
+1. 一键 launch 包装脚本：`./bash/30_training_launch.sh [配置文件]`
+2. 手动多终端分步脚本：`./bash/*.sh [配置文件]`
+
+两者共享同一套参数默认值与配置文件体系。
 
 ## 0. 先修改参数
 
-统一参数集中在同目录的 `env_defaults.sh`。
+统一参数默认值集中在同目录的 `env_defaults.sh`。
+
+所有脚本都支持可选配置文件参数：
+
+```bash
+./bash/23_rl_policy_node.sh
+./bash/23_rl_policy_node.sh bash/configs/train_pursuer_only.env.sh
+```
+
+如果不传参数，默认加载 `bash/env_defaults.sh`。
 
 你通常只需要改以下变量：
 
@@ -14,7 +28,24 @@
 4. `MAX_EPISODES` / `MAX_STEPS`
 5. `CHECKPOINT_DIR`
 
-## 1. Gazebo + 桥接
+## 1. 一键启动（推荐）
+
+```bash
+cd ~/swarm-ros
+./bash/30_training_launch.sh
+```
+
+带预设配置：
+
+```bash
+./bash/30_training_launch.sh bash/configs/train_from_scratch.env.sh
+./bash/30_training_launch.sh bash/configs/train_from_best.env.sh
+./bash/30_training_launch.sh bash/configs/train_pursuer_only.env.sh
+./bash/30_training_launch.sh bash/configs/train_evader_only.env.sh
+./bash/30_training_launch.sh bash/configs/eval_only.env.sh
+```
+
+## 2. 手动分步启动（调试）
 
 终端 T1：
 
@@ -32,7 +63,7 @@ cd ~/swarm-ros
 
 说明：agent 现在由 `agent_manager` 自动生成到 staging 区。
 
-## 2. 训练节点
+## 3. 训练节点
 
 终端 T4：
 
@@ -69,18 +100,18 @@ cd ~/swarm-ros
 ./bash/24_training_coordinator_node.sh
 ```
 
-## 3. Mock 后端替换说明
+## 4. Mock 后端替换说明
 
 如果不用 Gazebo，而是 mock 环境：
 
 1. 不启动 `10_gazebo_gui.sh`、`11_parameter_bridge.sh`
 2. 用 `22_mock_env_node.sh` 替换 `22_sim_bridge_node.sh`
 
-## 4. 快速停止
+## 5. 快速停止
 
 每个终端 `Ctrl+C` 即可；建议先停 `24_training_coordinator_node.sh`，再停 `23_rl_policy_node.sh`，最后停仿真相关进程。
 
-## 5. 终端手动发布控制命令
+## 6. 终端手动发布控制命令
 
 以下命令可在任意已 `source env.sh && source install/setup.bash` 的终端执行。
 

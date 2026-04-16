@@ -64,10 +64,14 @@ def generate_launch_description() -> LaunchDescription:
     max_episodes = LaunchConfiguration("max_episodes")
     max_steps = LaunchConfiguration("max_steps")
     reset_policy = LaunchConfiguration("reset_policy")
+    world_mode = LaunchConfiguration("world_mode")
+    seed_mode = LaunchConfiguration("seed_mode")
+    seed_value = LaunchConfiguration("seed_value")
     collision_distance = LaunchConfiguration("collision_distance")
     capture_radius = LaunchConfiguration("capture_radius")
     capture_steps = LaunchConfiguration("capture_steps")
     collision_penalty = LaunchConfiguration("collision_penalty")
+    obstacle_density = LaunchConfiguration("obstacle_density")
     pursuer_algo = LaunchConfiguration("pursuer_algo")
     pursuer_train_mode = LaunchConfiguration("pursuer_train_mode")
     pursuer_weights = LaunchConfiguration("pursuer_weights")
@@ -89,14 +93,24 @@ def generate_launch_description() -> LaunchDescription:
     policy_update_interval = LaunchConfiguration("policy_update_interval")
     use_synthetic_obs_when_missing = LaunchConfiguration("use_synthetic_obs_when_missing")
     world_half_extent = LaunchConfiguration("world_half_extent")
+    spawn_half_extent = LaunchConfiguration("spawn_half_extent")
+    spawn_attempts = LaunchConfiguration("spawn_attempts")
     pursuer_max_accel = LaunchConfiguration("pursuer_max_accel")
     evader_max_accel = LaunchConfiguration("evader_max_accel")
+    max_accel = LaunchConfiguration("max_accel")
+    checkpoint_prefix = LaunchConfiguration("checkpoint_prefix")
+    obstacle_model_package = LaunchConfiguration("obstacle_model_package")
     obstacle_pool_box = LaunchConfiguration("obstacle_pool_box")
     obstacle_pool_rect = LaunchConfiguration("obstacle_pool_rect")
     obstacle_pool_cylinder = LaunchConfiguration("obstacle_pool_cylinder")
+    obstacle_spawn_attempts = LaunchConfiguration("obstacle_spawn_attempts")
+    obstacle_min_clearance = LaunchConfiguration("obstacle_min_clearance")
     obstacle_staging_x = LaunchConfiguration("obstacle_staging_x")
     obstacle_staging_y = LaunchConfiguration("obstacle_staging_y")
     obstacle_staging_stride = LaunchConfiguration("obstacle_staging_stride")
+    pursuer_name_prefix = LaunchConfiguration("pursuer_name_prefix")
+    evader_name_prefix = LaunchConfiguration("evader_name_prefix")
+    agent_model_package = LaunchConfiguration("agent_model_package")
     agent_staging_x = LaunchConfiguration("agent_staging_x")
     agent_staging_y = LaunchConfiguration("agent_staging_y")
     agent_staging_stride = LaunchConfiguration("agent_staging_stride")
@@ -112,6 +126,10 @@ def generate_launch_description() -> LaunchDescription:
     reset_agents_delay_sec = LaunchConfiguration("reset_agents_delay_sec")
     reset_grace_steps = LaunchConfiguration("reset_grace_steps")
     always_reset_world = LaunchConfiguration("always_reset_world")
+    mock_dt = LaunchConfiguration("mock_dt")
+    mock_max_speed = LaunchConfiguration("mock_max_speed")
+    mock_linear_drag = LaunchConfiguration("mock_linear_drag")
+    mock_spawn_half_extent = LaunchConfiguration("mock_spawn_half_extent")
 
     gazebo_condition = IfCondition(PythonExpression(["'", env_backend, "' == 'gazebo'"]))
     gazebo_gui_condition = IfCondition(
@@ -138,19 +156,25 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("max_episodes", default_value="60"),
             DeclareLaunchArgument("max_steps", default_value="120"),
             DeclareLaunchArgument("reset_policy", default_value="2"),
+            DeclareLaunchArgument("world_mode", default_value="random"),
+            DeclareLaunchArgument("seed_mode", default_value="none"),
+            DeclareLaunchArgument("seed_value", default_value="42"),
             DeclareLaunchArgument("collision_distance", default_value="0.8"),
             DeclareLaunchArgument("capture_radius", default_value="2.0"),
             DeclareLaunchArgument("capture_steps", default_value="5"),
             DeclareLaunchArgument("collision_penalty", default_value="-2.0"),
+            DeclareLaunchArgument("obstacle_density", default_value="0.3"),
             DeclareLaunchArgument("pursuer_algo", default_value="maddpg"),
             DeclareLaunchArgument("pursuer_train_mode", default_value="train_scratch"),
             DeclareLaunchArgument("pursuer_weights", default_value=""),
             DeclareLaunchArgument("evader_algo", default_value="ddpg"),
             DeclareLaunchArgument("evader_train_mode", default_value="eval_only"),
             DeclareLaunchArgument("evader_weights", default_value=""),
+            DeclareLaunchArgument("max_accel", default_value="1.0"),
             DeclareLaunchArgument("pursuer_max_accel", default_value="-1.0"),
             DeclareLaunchArgument("evader_max_accel", default_value="-1.0"),
             DeclareLaunchArgument("checkpoint_dir", default_value="artifacts/checkpoints"),
+            DeclareLaunchArgument("checkpoint_prefix", default_value="pursuer_policy"),
             DeclareLaunchArgument("buffer_capacity", default_value="200000"),
             DeclareLaunchArgument("batch_size", default_value="128"),
             DeclareLaunchArgument("warmup_steps", default_value="500"),
@@ -165,12 +189,20 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("policy_update_interval", default_value="1"),
             DeclareLaunchArgument("use_synthetic_obs_when_missing", default_value="true"),
             DeclareLaunchArgument("world_half_extent", default_value="10.0"),
+            DeclareLaunchArgument("spawn_half_extent", default_value="9.0"),
+            DeclareLaunchArgument("spawn_attempts", default_value="300"),
+            DeclareLaunchArgument("obstacle_model_package", default_value="swarm_bringup"),
             DeclareLaunchArgument("obstacle_pool_box", default_value="8"),
             DeclareLaunchArgument("obstacle_pool_rect", default_value="8"),
             DeclareLaunchArgument("obstacle_pool_cylinder", default_value="8"),
+            DeclareLaunchArgument("obstacle_spawn_attempts", default_value="400"),
+            DeclareLaunchArgument("obstacle_min_clearance", default_value="0.2"),
             DeclareLaunchArgument("obstacle_staging_x", default_value="1000.0"),
             DeclareLaunchArgument("obstacle_staging_y", default_value="1000.0"),
             DeclareLaunchArgument("obstacle_staging_stride", default_value="1.5"),
+            DeclareLaunchArgument("pursuer_name_prefix", default_value="pursuer"),
+            DeclareLaunchArgument("evader_name_prefix", default_value="evader"),
+            DeclareLaunchArgument("agent_model_package", default_value="swarm_bringup"),
             DeclareLaunchArgument("agent_staging_x", default_value="1000.0"),
             DeclareLaunchArgument("agent_staging_y", default_value="1200.0"),
             DeclareLaunchArgument("agent_staging_stride", default_value="1.5"),
@@ -186,6 +218,10 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("reset_agents_delay_sec", default_value="0.4"),
             DeclareLaunchArgument("reset_grace_steps", default_value="12"),
             DeclareLaunchArgument("always_reset_world", default_value="true"),
+            DeclareLaunchArgument("mock_dt", default_value="0.05"),
+            DeclareLaunchArgument("mock_max_speed", default_value="3.0"),
+            DeclareLaunchArgument("mock_linear_drag", default_value="0.15"),
+            DeclareLaunchArgument("mock_spawn_half_extent", default_value="8.0"),
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(gz_launch_file),
                 launch_arguments={
@@ -208,25 +244,27 @@ def generate_launch_description() -> LaunchDescription:
                 output="screen",
                 parameters=[
                     {
-                        "world_mode": ParameterValue(
-                            PythonExpression([
-                                "'fixed' if '",
-                                env_backend,
-                                "' == 'gazebo' else 'random'",
-                            ]),
-                            value_type=str,
-                        ),
-                        "seed_mode": "none",
-                        "seed_value": 42,
+                        "world_mode": world_mode,
+                        "seed_mode": seed_mode,
+                        "seed_value": ParameterValue(seed_value, value_type=int),
                         "seed_sequence": [42, 100, 777, 2026],
-                        "obstacle_density": 0.3,
+                        "obstacle_density": ParameterValue(obstacle_density, value_type=float),
                         "world_half_extent": ParameterValue(world_half_extent, value_type=float),
                         "world_name": world_name,
+                        "obstacle_model_package": obstacle_model_package,
                         "obstacle_pool_box": ParameterValue(obstacle_pool_box, value_type=int),
                         "obstacle_pool_rect": ParameterValue(obstacle_pool_rect, value_type=int),
                         "obstacle_pool_cylinder": ParameterValue(
                             obstacle_pool_cylinder,
                             value_type=int,
+                        ),
+                        "obstacle_spawn_attempts": ParameterValue(
+                            obstacle_spawn_attempts,
+                            value_type=int,
+                        ),
+                        "obstacle_min_clearance": ParameterValue(
+                            obstacle_min_clearance,
+                            value_type=float,
                         ),
                         "obstacle_staging_x": ParameterValue(obstacle_staging_x, value_type=float),
                         "obstacle_staging_y": ParameterValue(obstacle_staging_y, value_type=float),
@@ -248,12 +286,14 @@ def generate_launch_description() -> LaunchDescription:
                         "num_evaders": ParameterValue(num_evaders, value_type=int),
                         "collision_distance": ParameterValue(collision_distance, value_type=float),
                         "capture_radius": ParameterValue(capture_radius, value_type=float),
-                        "spawn_half_extent": 9.0,
-                        "spawn_attempts": 300,
+                        "spawn_half_extent": ParameterValue(spawn_half_extent, value_type=float),
+                        "spawn_attempts": ParameterValue(spawn_attempts, value_type=int),
                         "world_half_extent": ParameterValue(world_half_extent, value_type=float),
                         "spawn_z": ParameterValue(fixed_z, value_type=float),
                         "world_name": world_name,
-                        "agent_model_package": "swarm_bringup",
+                        "pursuer_name_prefix": pursuer_name_prefix,
+                        "evader_name_prefix": evader_name_prefix,
+                        "agent_model_package": agent_model_package,
                         "agent_staging_x": ParameterValue(agent_staging_x, value_type=float),
                         "agent_staging_y": ParameterValue(agent_staging_y, value_type=float),
                         "agent_staging_stride": ParameterValue(agent_staging_stride, value_type=float),
@@ -269,8 +309,8 @@ def generate_launch_description() -> LaunchDescription:
                     {
                         "num_pursuers": ParameterValue(num_pursuers, value_type=int),
                         "num_evaders": ParameterValue(num_evaders, value_type=int),
-                        "pursuer_name_prefix": "pursuer",
-                        "evader_name_prefix": "evader",
+                        "pursuer_name_prefix": pursuer_name_prefix,
+                        "evader_name_prefix": evader_name_prefix,
                         "world_name": world_name,
                         "controller_enabled": ParameterValue(gazebo_controller_enabled, value_type=bool),
                         "controller_dt": ParameterValue(gazebo_controller_dt, value_type=float),
@@ -297,11 +337,11 @@ def generate_launch_description() -> LaunchDescription:
                     {
                         "num_pursuers": ParameterValue(num_pursuers, value_type=int),
                         "num_evaders": ParameterValue(num_evaders, value_type=int),
-                        "dt": 0.05,
+                        "dt": ParameterValue(mock_dt, value_type=float),
                         "world_half_extent": ParameterValue(world_half_extent, value_type=float),
-                        "max_speed": 3.0,
-                        "linear_drag": 0.15,
-                        "spawn_half_extent": 8.0,
+                        "max_speed": ParameterValue(mock_max_speed, value_type=float),
+                        "linear_drag": ParameterValue(mock_linear_drag, value_type=float),
+                        "spawn_half_extent": ParameterValue(mock_spawn_half_extent, value_type=float),
                     }
                 ],
                 condition=mock_condition,
@@ -321,7 +361,7 @@ def generate_launch_description() -> LaunchDescription:
                         "evader_algo": evader_algo,
                         "evader_train_mode": evader_train_mode,
                         "evader_weights": evader_weights,
-                        "max_accel": 1.0,
+                        "max_accel": ParameterValue(max_accel, value_type=float),
                         "pursuer_max_accel": ParameterValue(pursuer_max_accel, value_type=float),
                         "evader_max_accel": ParameterValue(evader_max_accel, value_type=float),
                         "capture_radius": ParameterValue(capture_radius, value_type=float),
@@ -343,7 +383,7 @@ def generate_launch_description() -> LaunchDescription:
                             value_type=bool,
                         ),
                         "checkpoint_dir": checkpoint_dir,
-                        "checkpoint_prefix": "pursuer_policy",
+                        "checkpoint_prefix": checkpoint_prefix,
                     }
                 ],
             ),

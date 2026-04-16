@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
-source "$(cd "$(dirname "$0")" && pwd)/env_defaults.sh"
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+CONFIG_FILE="${1:-}"
+source "${SCRIPT_DIR}/_load_config.sh" "${CONFIG_FILE}"
 
 ARGS=(
   -p "world_mode:=${WORLD_MODE}"                     # 可选: fixed(random对比)/random(泛化训练)

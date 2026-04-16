@@ -14,6 +14,11 @@
 5. sim_bridge 统一 Gazebo 话题，并把加速度指令落实到 Gazebo 实体运动。
 6. swarm_bringup 统一启动、仿真桥接、训练参数透传，并存放 world/model 资产。
 
+补充：
+
+1. `bash/30_training_launch.sh` 与 `src/swarm_bringup/launch/training_launch.py` 参数一一对齐。
+2. 手动分步脚本 `bash/*.sh` 与一键 launch 使用同一套默认参数源 `bash/env_defaults.sh`。
+
 ## 1. 逻辑闭环
 
 系统遵循如下回合闭环，避免出生点卡墙并保证训练状态一致：
@@ -42,9 +47,12 @@
 | obstacle_density | float | 0.3 | 随机障碍密度 |
 | world_half_extent | float | 10.0 | 世界半边长 |
 | world_name | string | urban | Gazebo world 名 |
+| obstacle_model_package | string | swarm_bringup | 障碍模型来源包 |
 | obstacle_pool_box | int | 8 | 方形障碍模型池数量 |
 | obstacle_pool_rect | int | 8 | 长方体障碍模型池数量 |
 | obstacle_pool_cylinder | int | 8 | 圆柱障碍模型池数量 |
+| obstacle_spawn_attempts | int | 400 | 障碍布局采样尝试次数 |
+| obstacle_min_clearance | float | 0.2 | 障碍最小间距 |
 | obstacle_staging_x | float | 1000.0 | 障碍 staging 区 x |
 | obstacle_staging_y | float | 1000.0 | 障碍 staging 区 y |
 | obstacle_staging_stride | float | 1.5 | staging 间距 |
@@ -253,6 +261,7 @@
 | train_updates_per_step | int | 1 | 每步训练轮数 |
 | exploration_noise_std | float | 0.2 | 探索噪声标准差 |
 | policy_update_interval | int | 1 | 策略延迟更新步长 |
+| optimize_horizon_steps | int | 120 | 优化时域参数 |
 | checkpoint_dir | string | artifacts/checkpoints | 权重输出目录 |
 | checkpoint_prefix | string | pursuer_policy | 权重前缀 |
 | use_synthetic_obs_when_missing | bool | true | 缺失观测时是否回退合成观测 |
@@ -319,6 +328,8 @@ checkpoint 产物：
 | reset_agents_delay_sec | float | 0.4 | world reset 到 agent reset 的延迟 |
 | reset_grace_steps | int | 12 | reset 后碰撞忽略步数 |
 | always_reset_world | bool | true | 每轮 done 后都刷新障碍 |
+
+说明：一键 launch 的默认 `max_episodes=60`、`max_steps=120`，会覆盖节点内部默认值。
 
 参数细化说明：
 
@@ -405,6 +416,10 @@ world 已包含：
 | max_episodes | 60 | 回合数 |
 | max_steps | 120 | 每回合步数 |
 | reset_policy | 2 | 重置策略 |
+| world_mode | random | 世界布局模式 |
+| seed_mode | none | 随机种子模式 |
+| seed_value | 42 | 固定种子 |
+| obstacle_density | 0.3 | 障碍密度 |
 | collision_distance | 0.8 | 碰撞约束采样间距 |
 | pursuer_algo | maddpg | 追捕算法 |
 | pursuer_train_mode | train_scratch | 追捕训练模式 |
@@ -412,9 +427,16 @@ world 已包含：
 | evader_algo | ddpg | 逃避算法 |
 | evader_train_mode | eval_only | 逃避训练模式 |
 | evader_weights | "" | 逃避权重 |
+| max_accel | 1.0 | 全体基础最大加速度 |
 | agent_staging_x | 1000.0 | agent staging 区 x |
 | agent_staging_y | 1200.0 | agent staging 区 y |
 | agent_staging_stride | 1.5 | agent staging 间距 |
+| obstacle_model_package | swarm_bringup | 障碍模型来源包 |
+| obstacle_spawn_attempts | 400 | 障碍布局采样尝试次数 |
+| obstacle_min_clearance | 0.2 | 障碍最小间距 |
+| spawn_half_extent | 9.0 | agent 重置采样半径 |
+| spawn_attempts | 300 | agent 重置采样尝试次数 |
+| checkpoint_prefix | pursuer_policy | 权重名前缀 |
 | pursuer_max_accel | -1.0 | 追捕者最大加速度（<=0 回退 max_accel） |
 | evader_max_accel | -1.0 | 逃避者最大加速度（<=0 回退 max_accel） |
 | checkpoint_dir | artifacts/checkpoints | 权重目录 |
@@ -428,6 +450,10 @@ world 已包含：
 | initial_reset_delay_sec | 5.0 | 启动后首次 reset 延迟 |
 | reset_agents_delay_sec | 0.4 | world reset 到 agent reset 延迟 |
 | reset_grace_steps | 12 | reset 后碰撞忽略步数 |
+| mock_dt | 0.05 | mock 后端积分步长 |
+| mock_max_speed | 3.0 | mock 后端速度上限 |
+| mock_linear_drag | 0.15 | mock 后端阻尼 |
+| mock_spawn_half_extent | 8.0 | mock 初始采样半径 |
 
 Launch 参数细化说明：
 

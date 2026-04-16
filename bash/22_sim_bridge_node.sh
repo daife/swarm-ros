@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
-source "$(cd "$(dirname "$0")" && pwd)/env_defaults.sh"
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+CONFIG_FILE="${1:-}"
+source "${SCRIPT_DIR}/_load_config.sh" "${CONFIG_FILE}"
 
 ARGS=(
   -p "num_pursuers:=${NUM_PURSUERS}"                         # 可选: 追捕者数量

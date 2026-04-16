@@ -19,6 +19,10 @@ __pycache__/
 *.egg-info/
 dist/
 
+# Training artifacts
+artifacts/checkpoints/
+*.pth
+
 # IDE and OS files
 .vscode/
 .idea/
