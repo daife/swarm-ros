@@ -30,7 +30,7 @@ cd ~/swarm-ros
 ./bash/11_parameter_bridge.sh
 ```
 
-说明：agent 现在由 `agent_manager` 自动生成到 staging 区，不再需要手工执行 `12_spawn_agents.sh`。
+说明：agent 现在由 `agent_manager` 自动生成到 staging 区。
 
 ## 2. 训练节点
 
@@ -73,7 +73,7 @@ cd ~/swarm-ros
 
 如果不用 Gazebo，而是 mock 环境：
 
-1. 不启动 `10_gazebo_gui.sh`、`11_parameter_bridge.sh`、`12_spawn_agents.sh`
+1. 不启动 `10_gazebo_gui.sh`、`11_parameter_bridge.sh`
 2. 用 `22_mock_env_node.sh` 替换 `22_sim_bridge_node.sh`
 
 ## 4. 快速停止

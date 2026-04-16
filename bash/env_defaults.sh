@@ -21,15 +21,6 @@ export NUM_EVADERS="${NUM_EVADERS:-1}"                     # 可选: 逃避者�
 export PURSUER_PREFIX="${PURSUER_PREFIX:-pursuer}"         # 可选: 追捕者模型名前缀
 export EVADER_PREFIX="${EVADER_PREFIX:-evader}"            # 可选: 逃避者模型名前缀
 
-# ---------- 12_spawn_agents.sh ----------
-export SPAWN_X0="${SPAWN_X0:-1000.0}"                     # 可选: 初始网格 x 起点（默认世界外 staging）
-export SPAWN_Y0="${SPAWN_Y0:-1200.0}"                     # 可选: 初始网格 y 起点（默认世界外 staging）
-export SPAWN_SPACING="${SPAWN_SPACING:-1.5}"              # 可选: 初始网格间距
-export SPAWN_COLUMNS="${SPAWN_COLUMNS:-4}"                # 可选: 每行放置数量
-export SPAWN_TIMEOUT_MS="${SPAWN_TIMEOUT_MS:-3000}"       # 可选: 单个实体 spawn 超时(ms)
-export PURSUER_SDF="${PURSUER_SDF:-}"                     # 可选: pursuer SDF 绝对路径，留空则自动从包目录推断
-export EVADER_SDF="${EVADER_SDF:-}"                       # 可选: evader SDF 绝对路径，留空则自动从包目录推断
-
 # ---------- 20_world_manager_node.sh ----------
 export WORLD_MODE="${WORLD_MODE:-random}"                   # 可选: fixed/random
 export SEED_MODE="${SEED_MODE:-sequence}"                      # 可选: single/sequence/none(纯随机种子)
@@ -37,6 +28,7 @@ export SEED_VALUE="${SEED_VALUE:-42}"                      # 可选: 固定随�
 export SEED_SEQUENCE="${SEED_SEQUENCE:-[42, 100, 777, 2026]}"  # 可选: 种子序列(YAML数组)
 export OBSTACLE_DENSITY="${OBSTACLE_DENSITY:-0.9}"         # 可选: 障碍密度
 export WORLD_HALF_EXTENT="${WORLD_HALF_EXTENT:-10.0}"      # 可选: 世界半边长
+export OBSTACLE_MODEL_PACKAGE="${OBSTACLE_MODEL_PACKAGE:-swarm_bringup}"  # 可选: 障碍模型来源包
 export OBSTACLE_POOL_BOX="${OBSTACLE_POOL_BOX:-3}"         # 可选: 方形障碍池数量
 export OBSTACLE_POOL_RECT="${OBSTACLE_POOL_RECT:-3}"       # 可选: 长方体障碍池数量
 export OBSTACLE_POOL_CYLINDER="${OBSTACLE_POOL_CYLINDER:-3}"   # 可选: 圆柱障碍池数量

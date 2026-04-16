@@ -10,6 +10,7 @@ ARGS=(
   -p "obstacle_density:=${OBSTACLE_DENSITY}"         # 可选: 障碍密度
   -p "world_half_extent:=${WORLD_HALF_EXTENT}"       # 可选: 世界边界半径
   -p "world_name:=${WORLD_NAME}"                     # 可选: Gazebo world 名
+  -p "obstacle_model_package:=${OBSTACLE_MODEL_PACKAGE}" # 可选: 障碍模型来源包
   -p "obstacle_pool_box:=${OBSTACLE_POOL_BOX}"       # 可选: 方形障碍池数量
   -p "obstacle_pool_rect:=${OBSTACLE_POOL_RECT}"     # 可选: 长方体障碍池数量
   -p "obstacle_pool_cylinder:=${OBSTACLE_POOL_CYLINDER}" # 可选: 圆柱障碍池数量
