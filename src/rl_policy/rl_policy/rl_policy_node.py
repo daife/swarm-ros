@@ -86,6 +86,8 @@ class RLPolicyNode(Node):
         self.declare_parameter("evader_weights", "")
 
         self.declare_parameter("max_accel", 1.0)
+        self.declare_parameter("pursuer_max_accel", -1.0)
+        self.declare_parameter("evader_max_accel", -1.0)
         self.declare_parameter("capture_radius", 2.0)
         self.declare_parameter("collision_penalty", -2.0)
         self.declare_parameter("discount_gamma", 0.99)
@@ -369,7 +371,9 @@ class RLPolicyNode(Node):
             self.collision_flags[agent_id] = True
 
     def on_episode_done(self, _msg: Int8) -> None:
-        self.done_latched = True
+        # Do not treat reset command itself as episode boundary.
+        # Episode boundary is decided by /rl/episode_metrics (or horizon fallback).
+        return
 
     def on_episode_metrics(self, msg: Float32MultiArray) -> None:
         if len(msg.data) >= 3:
@@ -538,7 +542,15 @@ class RLPolicyNode(Node):
         return np.asarray(actions, dtype=np.float32)
 
     def _publish_action(self, agent_id: int, action_xy: np.ndarray) -> None:
-        scale = self.get_parameter("max_accel").get_parameter_value().double_value
+        default_scale = self.get_parameter("max_accel").get_parameter_value().double_value
+        pursuer_scale = self.get_parameter("pursuer_max_accel").get_parameter_value().double_value
+        evader_scale = self.get_parameter("evader_max_accel").get_parameter_value().double_value
+
+        if agent_id < self.num_pursuers:
+            scale = pursuer_scale if pursuer_scale > 0.0 else default_scale
+        else:
+            scale = evader_scale if evader_scale > 0.0 else default_scale
+
         cmd = Accel()
         cmd.linear.x = float(scale * action_xy[0])
         cmd.linear.y = float(scale * action_xy[1])

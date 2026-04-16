@@ -13,6 +13,8 @@ ARGS=(
   -p "evader_weights:=${EVADER_WEIGHTS}"                              # 可选: evader 权重路径
 
   -p "max_accel:=${MAX_ACCEL}"                                        # 可选: 动作加速度幅值上限
+  -p "pursuer_max_accel:=${PURSUER_MAX_ACCEL}"                        # 可选: pursuer 最大加速度
+  -p "evader_max_accel:=${EVADER_MAX_ACCEL}"                          # 可选: evader 最大加速度
   -p "capture_radius:=${CAPTURE_RADIUS}"                              # 可选: 捕获判定距离
   -p "collision_penalty:=${COLLISION_PENALTY}"                        # 可选: 碰撞惩罚
   -p "discount_gamma:=${DISCOUNT_GAMMA}"                              # 可选: 折扣因子

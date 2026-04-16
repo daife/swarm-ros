@@ -22,9 +22,9 @@ export PURSUER_PREFIX="${PURSUER_PREFIX:-pursuer}"         # 可选: 追捕者�
 export EVADER_PREFIX="${EVADER_PREFIX:-evader}"            # 可选: 逃避者模型名前缀
 
 # ---------- 12_spawn_agents.sh ----------
-export SPAWN_X0="${SPAWN_X0:--6.0}"                       # 可选: 初始网格 x 起点
-export SPAWN_Y0="${SPAWN_Y0:--6.0}"                       # 可选: 初始网格 y 起点
-export SPAWN_SPACING="${SPAWN_SPACING:-2.2}"              # 可选: 初始网格间距
+export SPAWN_X0="${SPAWN_X0:-1000.0}"                     # 可选: 初始网格 x 起点（默认世界外 staging）
+export SPAWN_Y0="${SPAWN_Y0:-1200.0}"                     # 可选: 初始网格 y 起点（默认世界外 staging）
+export SPAWN_SPACING="${SPAWN_SPACING:-1.5}"              # 可选: 初始网格间距
 export SPAWN_COLUMNS="${SPAWN_COLUMNS:-4}"                # 可选: 每行放置数量
 export SPAWN_TIMEOUT_MS="${SPAWN_TIMEOUT_MS:-3000}"       # 可选: 单个实体 spawn 超时(ms)
 export PURSUER_SDF="${PURSUER_SDF:-}"                     # 可选: pursuer SDF 绝对路径，留空则自动从包目录推断
@@ -37,17 +37,30 @@ export SEED_VALUE="${SEED_VALUE:-42}"                      # 可选: 固定随�
 export SEED_SEQUENCE="${SEED_SEQUENCE:-[42, 100, 777, 2026]}"  # 可选: 种子序列(YAML数组)
 export OBSTACLE_DENSITY="${OBSTACLE_DENSITY:-0.3}"         # 可选: 障碍密度
 export WORLD_HALF_EXTENT="${WORLD_HALF_EXTENT:-10.0}"      # 可选: 世界半边长
+export OBSTACLE_POOL_BOX="${OBSTACLE_POOL_BOX:-8}"         # 可选: 方形障碍池数量
+export OBSTACLE_POOL_RECT="${OBSTACLE_POOL_RECT:-8}"       # 可选: 长方体障碍池数量
+export OBSTACLE_POOL_CYLINDER="${OBSTACLE_POOL_CYLINDER:-8}"   # 可选: 圆柱障碍池数量
+export OBSTACLE_STAGING_X="${OBSTACLE_STAGING_X:-1000.0}"  # 可选: 障碍 staging 区 x
+export OBSTACLE_STAGING_Y="${OBSTACLE_STAGING_Y:-1000.0}"  # 可选: 障碍 staging 区 y
+export OBSTACLE_STAGING_STRIDE="${OBSTACLE_STAGING_STRIDE:-1.5}" # 可选: 障碍 staging 间距
+export OBSTACLE_SPAWN_ATTEMPTS="${OBSTACLE_SPAWN_ATTEMPTS:-400}" # 可选: 障碍布局采样尝试次数
+export OBSTACLE_MIN_CLEARANCE="${OBSTACLE_MIN_CLEARANCE:-0.2}"   # 可选: 障碍间最小间距
 
 # ---------- 21_agent_manager_node.sh ----------
-export SAFE_SPAWN_DISTANCE="${SAFE_SPAWN_DISTANCE:-1.5}"   # 可选: 与障碍最小安全距离
+export COLLISION_DISTANCE="${COLLISION_DISTANCE:-0.8}"     # 可选: 统一碰撞距离约束
+export SAFE_SPAWN_DISTANCE="${SAFE_SPAWN_DISTANCE:-1.5}"   # 可选: 兼容旧参数，建议改用 COLLISION_DISTANCE
 export SPAWN_HALF_EXTENT="${SPAWN_HALF_EXTENT:-9.0}"       # 可选: 出生采样边界半径
 export SPAWN_ATTEMPTS="${SPAWN_ATTEMPTS:-300}"             # 可选: 单个体采样最大尝试次数
+export FIXED_Z="${FIXED_Z:-0.7}"                           # 可选: z 轴固定高度
 
 # ---------- 22_sim_bridge_node.sh ----------
 export GAZEBO_CONTROLLER_ENABLED="${GAZEBO_CONTROLLER_ENABLED:-true}"  # 可选: 是否启用控制器
 export GAZEBO_CONTROLLER_DT="${GAZEBO_CONTROLLER_DT:-0.05}"            # 可选: 控制积分周期(s)
 export GAZEBO_MAX_SPEED="${GAZEBO_MAX_SPEED:-3.0}"                      # 可选: 速度上限
+export GAZEBO_PURSUER_MAX_SPEED="${GAZEBO_PURSUER_MAX_SPEED:--1.0}"    # 可选: pursuer 速度上限，<=0则回退 GAZEBO_MAX_SPEED
+export GAZEBO_EVADER_MAX_SPEED="${GAZEBO_EVADER_MAX_SPEED:--1.0}"      # 可选: evader 速度上限，<=0则回退 GAZEBO_MAX_SPEED
 export GAZEBO_LINEAR_DRAG="${GAZEBO_LINEAR_DRAG:-0.15}"                # 可选: 线性阻尼
+export GAZEBO_CONTROL_REQUIRES_RESET="${GAZEBO_CONTROL_REQUIRES_RESET:-true}" # 可选: 首次 reset 前是否禁止控制回写
 
 # ---------- 23_rl_policy_node.sh ----------
 export PURSUER_ALGO="${PURSUER_ALGO:-maddpg}"             # 可选: maddpg/cbc_tp_net(占位)
@@ -57,6 +70,8 @@ export EVADER_ALGO="${EVADER_ALGO:-ddpg}"                 # 可选: ddpg
 export EVADER_TRAIN_MODE="${EVADER_TRAIN_MODE:-eval_only}"  # 可选: train_scratch/train_load/eval_only
 export EVADER_WEIGHTS="${EVADER_WEIGHTS:-}"               # 可选: 逃避者权重路径
 export MAX_ACCEL="${MAX_ACCEL:-1.0}"                      # 可选: 动作最大加速度
+export PURSUER_MAX_ACCEL="${PURSUER_MAX_ACCEL:--1.0}"     # 可选: pursuer 最大加速度，<=0则回退 MAX_ACCEL
+export EVADER_MAX_ACCEL="${EVADER_MAX_ACCEL:--1.0}"       # 可选: evader 最大加速度，<=0则回退 MAX_ACCEL
 export CAPTURE_RADIUS="${CAPTURE_RADIUS:-2.0}"            # 可选: 判定捕获半径
 export COLLISION_PENALTY="${COLLISION_PENALTY:--2.0}"     # 可选: 碰撞惩罚
 export DISCOUNT_GAMMA="${DISCOUNT_GAMMA:-0.99}"           # 可选: 折扣因子
@@ -81,3 +96,7 @@ export MAX_EPISODES="${MAX_EPISODES:-60}"                 # 可选: 最大训练
 export MAX_STEPS="${MAX_STEPS:-120}"                      # 可选: 每回合最大步数
 export RESET_POLICY="${RESET_POLICY:-2}"                  # 可选: 1固定重置/2安全随机/3重置世界再随机
 export CAPTURE_STEPS="${CAPTURE_STEPS:-5}"                # 可选: 连续捕获步数阈值
+export INITIAL_RESET_DELAY_SEC="${INITIAL_RESET_DELAY_SEC:-5.0}" # 可选: 启动后首次 reset 延迟
+export RESET_AGENTS_DELAY_SEC="${RESET_AGENTS_DELAY_SEC:-0.4}"   # 可选: world reset 后到 agent reset 的延迟
+export RESET_GRACE_STEPS="${RESET_GRACE_STEPS:-12}"       # 可选: reset 后碰撞忽略步数
+export ALWAYS_RESET_WORLD="${ALWAYS_RESET_WORLD:-true}"    # 可选: 每轮 done 后都重置障碍

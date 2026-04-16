@@ -19,10 +19,10 @@
 系统遵循如下回合闭环，避免出生点卡墙并保证训练状态一致：
 
 1. training_coordinator 判定 done（追捕成功、碰撞、步数超限）。
-2. 若 reset_policy=3，则先发布 /scheduler/reset_world。
+2. 每轮 reset 先发布 /scheduler/reset_world（只重置障碍位置，不重启 Gazebo）。
 3. world_manager 完成障碍物刷新并发布 /world_manager/obstacles。
-4. training_coordinator 发布 /scheduler/reset_agents（模式 1 或 2）。
-5. agent_manager 基于障碍物边界 + safe_spawn_distance 安全采样并调用 SetEntityPose。
+4. training_coordinator 延迟发布 /scheduler/reset_agents（模式 1 或 2）。
+5. agent_manager 基于障碍物/边界/捕获半径 + collision_distance 采样并调用 SetEntityPose。
 6. rl_policy 以 reset 消息作为回合边界，写入 replay 与 checkpoint。
 
 ## 2. 功能包与参数
@@ -41,6 +41,13 @@
 | seed_sequence | int[] | [42,43,44,45] | sequence 模式种子序列 |
 | obstacle_density | float | 0.3 | 随机障碍密度 |
 | world_half_extent | float | 10.0 | 世界半边长 |
+| world_name | string | urban | Gazebo world 名 |
+| obstacle_pool_box | int | 8 | 方形障碍模型池数量 |
+| obstacle_pool_rect | int | 8 | 长方体障碍模型池数量 |
+| obstacle_pool_cylinder | int | 8 | 圆柱障碍模型池数量 |
+| obstacle_staging_x | float | 1000.0 | 障碍 staging 区 x |
+| obstacle_staging_y | float | 1000.0 | 障碍 staging 区 y |
+| obstacle_staging_stride | float | 1.5 | staging 间距 |
 
 参数细化说明：
 
@@ -56,7 +63,10 @@
 4. `obstacle_density`:
   - 典型可用范围 `0.1 ~ 0.5`。
   - 越大表示障碍越密，碰撞概率上升，训练初期可能更难收敛。
-5. `world_half_extent`:
+5. `obstacle_pool_*`:
+  - 启动时不把障碍放入训练区，而是放到世界外 staging 区。
+  - 若本轮密度所需数量超过池大小，world_manager 会自动扩池并生成新障碍。
+6. `world_half_extent`:
   - 世界边界为 `[-world_half_extent, +world_half_extent]`。
   - 建议与 `spawn_half_extent`、`sim_bridge.world_half_extent` 保持一致或前者更小。
 
@@ -75,27 +85,32 @@
 | --- | --- | --- | --- |
 | num_pursuers | int | 5 | 追捕者数量 |
 | num_evaders | int | 1 | 逃避者数量 |
-| safe_spawn_distance | float | 1.5 | 与障碍物最小缓冲距离 |
+| collision_distance | float | 0.8 | 统一碰撞距离约束 |
+| capture_radius | float | 2.0 | reset 时追逃最小间隔约束 |
+| world_half_extent | float | 10.0 | 重置采样边界 |
 | spawn_half_extent | float | 9.0 | 采样区域半边长 |
 | spawn_attempts | int | 300 | 最大采样尝试次数 |
+| spawn_z | float | 0.7 | 重置高度 |
 | world_name | string | urban | Gazebo world 名，用于 set_pose 服务路径 |
 | pursuer_name_prefix | string | pursuer | 追捕者模型名前缀 |
 | evader_name_prefix | string | evader | 逃避者模型名前缀 |
 
 参数细化说明：
 
-1. `safe_spawn_distance`:
-  - 常用范围 `1.0 ~ 2.5`。
-  - 值越大，出生点离障碍越远，碰撞少但可采样空间更小。
-2. `spawn_half_extent`:
+1. `collision_distance`:
+  - 用于 agent-agent、agent-obstacle、agent-boundary 的统一最小间隔。
+  - 重置阶段碰撞不计分，训练阶段恢复正常计分。
+2. `capture_radius`:
+  - 采样时会额外保证 pursuer 和 evader 初始间距大于 `capture_radius + collision_distance`。
+3. `spawn_half_extent`:
   - 推荐满足 `spawn_half_extent <= world_half_extent - 0.5`。
   - 太大时可能贴近边界，影响初始动作质量。
-3. `spawn_attempts`:
+4. `spawn_attempts`:
   - 常用 `200 ~ 1000`。
   - 障碍密度高时建议增大，避免频繁触发原点回退。
-4. `world_name`:
+5. `world_name`:
   - 必须与 Gazebo 实际 world 名一致，否则 `set_pose` 会失败。
-5. `pursuer_name_prefix` / `evader_name_prefix`:
+6. `pursuer_name_prefix` / `evader_name_prefix`:
   - 需与模型注入时命名规则一致（如 `pursuer_0`、`evader_0`）。
 
 话题与服务：
@@ -122,8 +137,12 @@
 | controller_enabled | bool | true | 是否启用加速度控制器 |
 | controller_dt | float | 0.05 | 控制积分周期 |
 | max_speed | float | 3.0 | 速度上限 |
+| pursuer_max_speed | float | -1.0 | 追捕者速度上限（<=0 回退 max_speed） |
+| evader_max_speed | float | -1.0 | 逃避者速度上限（<=0 回退 max_speed） |
 | linear_drag | float | 0.15 | 线性阻尼 |
 | world_half_extent | float | 10.0 | 位置边界裁剪 |
+| fixed_z | float | 0.7 | 固定高度 |
+| control_requires_reset | bool | true | 首次 reset 前不执行控制回写 |
 
 参数细化说明：
 
@@ -136,12 +155,17 @@
 3. `max_speed`:
   - 建议范围 `2.0 ~ 5.0`。
   - 过大可能导致追捕行为过于激进，训练不稳定。
-4. `linear_drag`:
+4. `pursuer_max_speed` / `evader_max_speed`:
+  - 可独立设置追捕者与逃避者最大速度。
+  - 取值 <= 0 时回退 `max_speed`。
+5. `linear_drag`:
   - 建议范围 `0.05 ~ 0.4`。
   - 较大时速度衰减快，轨迹更稳但机动性降低。
-5. `world_half_extent`:
+6. `world_half_extent`:
   - 控制器会对位置做边界裁剪，防止实体越界。
   - 应与环境边界一致，避免“看起来卡墙/瞬移”的现象。
+7. `fixed_z`:
+  - 控制层会强制 z 恒定，并将发布 odom 的 z 速度置 0。
 
 话题：
 
@@ -206,6 +230,8 @@
 | evader_train_mode | string | eval_only | train_scratch / train_load / eval_only |
 | evader_weights | string | "" | 逃避者权重路径 |
 | max_accel | float | 1.0 | 输出加速度缩放 |
+| pursuer_max_accel | float | -1.0 | 追捕者最大加速度（<=0 回退 max_accel） |
+| evader_max_accel | float | -1.0 | 逃避者最大加速度（<=0 回退 max_accel） |
 | capture_radius | float | 2.0 | 捕获判定半径 |
 | collision_penalty | float | -2.0 | 碰撞惩罚 |
 | discount_gamma | float | 0.99 | 折扣因子 |
@@ -253,9 +279,11 @@
   - 太小探索不足，太大动作抖动严重。
 9. `max_accel`:
   - 动作尺度上限，应与控制器和场景大小匹配。
-10. `capture_radius` 与 `collision_penalty`:
+10. `pursuer_max_accel` / `evader_max_accel`:
+  - 允许追捕者和逃避者使用不同机动能力上限。
+11. `capture_radius` 与 `collision_penalty`:
   - 前者影响 done 判定难度，后者影响风险规避倾向。
-11. `use_synthetic_obs_when_missing`:
+12. `use_synthetic_obs_when_missing`:
   - Gazebo 启动早期观测未齐时，`true` 能降低训练中断风险。
 
 checkpoint 产物：
@@ -280,6 +308,10 @@ checkpoint 产物：
 | collision_penalty | float | -2.0 | 碰撞罚分累计到指标 |
 | capture_radius | float | 2.0 | 追捕半径 |
 | capture_steps | int | 5 | 连续满足追捕步数 |
+| initial_reset_delay_sec | float | 5.0 | 启动后首次 reset 延迟 |
+| reset_agents_delay_sec | float | 0.4 | world reset 到 agent reset 的延迟 |
+| reset_grace_steps | int | 12 | reset 后碰撞忽略步数 |
+| always_reset_world | bool | true | 每轮 done 后都刷新障碍 |
 
 参数细化说明：
 
@@ -292,10 +324,14 @@ checkpoint 产物：
   - `1`: 固定重置到初始点，训练最稳定。
   - `2`: 安全随机重置，泛化更好（推荐默认）。
   - `3`: 先重置世界再随机，难度最高、适合后期增强。
-4. `capture_radius` 与 `capture_steps`:
+4. `initial_reset_delay_sec` / `reset_agents_delay_sec`:
+  - 保证“先 spawn，再 reset，再训练”，减少初始化竞争条件。
+5. `reset_grace_steps`:
+  - reset 后短窗口内碰撞不计分，避免重置瞬态干扰训练指标。
+6. `capture_radius` 与 `capture_steps`:
   - 两者共同决定捕获成功门槛。
   - 半径更大、连续步数更小会更容易判定捕获。
-5. `collision_penalty`:
+7. `collision_penalty`:
   - 该值越负，策略越倾向规避碰撞。
 
 指标消息 /rl/episode_metrics:
@@ -316,7 +352,7 @@ checkpoint 产物：
 补充说明：
 
 1. `done_reason` 分布是最直接的训练健康度信号。
-2. 如果长期大量 `done_reason=2`，优先调大 `safe_spawn_distance` 或提高碰撞惩罚绝对值。
+2. 如果长期大量 `done_reason=2`，优先调大 `collision_distance` 或提高碰撞惩罚绝对值。
 3. 如果长期大量 `done_reason=3`，可适当增大 `max_steps`，或提高探索噪声与动作上限。
 4. 建议同时观察 `rl_policy_node` 日志中的 `pursuer_return`、`evader_return`、`replay`，与本话题联合判断收敛。
 
@@ -327,6 +363,9 @@ checkpoint 产物：
 - src/swarm_bringup/worlds/urban.world
 - src/swarm_bringup/models/pursuer/model.sdf
 - src/swarm_bringup/models/evader/model.sdf
+- src/swarm_bringup/models/obstacle_box/model.sdf
+- src/swarm_bringup/models/obstacle_rect/model.sdf
+- src/swarm_bringup/models/obstacle_cylinder/model.sdf
 
 SDF 已包含：
 
@@ -337,8 +376,9 @@ SDF 已包含：
 world 已包含：
 
 1. Physics、Sensors、Contact 等系统插件。
-2. 地面与固定建筑物（与 world_manager fixed 障碍布局一致）。
+2. 地面与边界墙（训练边界）。
 3. 无预置无人机实体；训练启动时由 launch 动态注入（pursuer_0..4, evader_0）。
+4. 无预置障碍物；障碍由 world_manager 在 reset 时从模型池移入训练区。
 
 ## 4. Launch 参数
 
@@ -357,18 +397,26 @@ world 已包含：
 | max_episodes | 60 | 回合数 |
 | max_steps | 120 | 每回合步数 |
 | reset_policy | 2 | 重置策略 |
-| safe_spawn_distance | 1.5 | 安全采样间距 |
+| collision_distance | 0.8 | 碰撞约束采样间距 |
 | pursuer_algo | maddpg | 追捕算法 |
 | pursuer_train_mode | train_scratch | 追捕训练模式 |
 | pursuer_weights | "" | 追捕权重 |
 | evader_algo | ddpg | 逃避算法 |
 | evader_train_mode | eval_only | 逃避训练模式 |
 | evader_weights | "" | 逃避权重 |
+| pursuer_max_accel | -1.0 | 追捕者最大加速度（<=0 回退 max_accel） |
+| evader_max_accel | -1.0 | 逃避者最大加速度（<=0 回退 max_accel） |
 | checkpoint_dir | artifacts/checkpoints | 权重目录 |
 | gazebo_controller_enabled | true | Gazebo运动控制是否启用 |
 | gazebo_controller_dt | 0.05 | Gazebo控制积分周期 |
 | gazebo_max_speed | 3.0 | Gazebo速度上限 |
+| gazebo_pursuer_max_speed | -1.0 | 追捕者速度上限（<=0 回退 gazebo_max_speed） |
+| gazebo_evader_max_speed | -1.0 | 逃避者速度上限（<=0 回退 gazebo_max_speed） |
 | gazebo_linear_drag | 0.15 | Gazebo阻尼 |
+| fixed_z | 0.7 | 固定高度 |
+| initial_reset_delay_sec | 5.0 | 启动后首次 reset 延迟 |
+| reset_agents_delay_sec | 0.4 | world reset 到 agent reset 延迟 |
+| reset_grace_steps | 12 | reset 后碰撞忽略步数 |
 
 Launch 参数细化说明：
 

@@ -105,6 +105,8 @@ ros2 topic pub --once /scheduler/reset_agents std_msgs/msg/Int8 "{data: 1}"
 ros2 topic pub --once /scheduler/reset_agents std_msgs/msg/Int8 "{data: 2}"
 ```
 
+说明：当前 mode=2 使用 collision_distance 约束采样，同时约束边界、障碍和追逃初始距离。
+
 快速查看命令是否生效：
 
 ```bash

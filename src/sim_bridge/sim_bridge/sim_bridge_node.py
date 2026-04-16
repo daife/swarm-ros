@@ -23,22 +23,37 @@ class SimBridgeNode(Node):
         self.declare_parameter("controller_enabled", True)
         self.declare_parameter("controller_dt", 0.05)
         self.declare_parameter("max_speed", 3.0)
+        self.declare_parameter("pursuer_max_speed", -1.0)
+        self.declare_parameter("evader_max_speed", -1.0)
         self.declare_parameter("linear_drag", 0.15)
         self.declare_parameter("world_half_extent", 10.0)
+        self.declare_parameter("fixed_z", 0.7)
+        self.declare_parameter("control_requires_reset", True)
 
         num_pursuers = self.get_parameter("num_pursuers").get_parameter_value().integer_value
         num_evaders = self.get_parameter("num_evaders").get_parameter_value().integer_value
         pursuer_prefix = self.get_parameter("pursuer_name_prefix").get_parameter_value().string_value
         evader_prefix = self.get_parameter("evader_name_prefix").get_parameter_value().string_value
         self.world_name = self.get_parameter("world_name").get_parameter_value().string_value
+        self.num_pursuers = num_pursuers
 
         self.controller_enabled = (
             self.get_parameter("controller_enabled").get_parameter_value().bool_value
         )
         self.controller_dt = self.get_parameter("controller_dt").get_parameter_value().double_value
         self.max_speed = self.get_parameter("max_speed").get_parameter_value().double_value
+        self.pursuer_max_speed = (
+            self.get_parameter("pursuer_max_speed").get_parameter_value().double_value
+        )
+        self.evader_max_speed = (
+            self.get_parameter("evader_max_speed").get_parameter_value().double_value
+        )
         self.linear_drag = self.get_parameter("linear_drag").get_parameter_value().double_value
         self.world_half_extent = self.get_parameter("world_half_extent").get_parameter_value().double_value
+        self.fixed_z = self.get_parameter("fixed_z").get_parameter_value().double_value
+        self.control_requires_reset = (
+            self.get_parameter("control_requires_reset").get_parameter_value().bool_value
+        )
 
         self.agent_names: List[Tuple[int, str]] = []
         for i in range(num_pursuers):
@@ -52,6 +67,7 @@ class SimBridgeNode(Node):
         self.positions: Dict[int, np.ndarray] = {}
         self.velocities: Dict[int, np.ndarray] = {}
         self.model_ready: Dict[int, bool] = {}
+        self.has_received_reset = False
 
         set_pose_service = f"/world/{self.world_name}/set_pose"
         self.set_pose_client = self.create_client(SetEntityPose, set_pose_service)
@@ -113,6 +129,11 @@ class SimBridgeNode(Node):
         self.positions[agent_id][1] = msg.pose.pose.position.y
         self.velocities[agent_id][0] = msg.twist.twist.linear.x
         self.velocities[agent_id][1] = msg.twist.twist.linear.y
+
+        msg.pose.pose.position.z = self.fixed_z
+        msg.twist.twist.linear.z = 0.0
+        msg.twist.twist.angular.x = 0.0
+        msg.twist.twist.angular.y = 0.0
         self.odom_pubs[agent_id].publish(msg)
 
     def on_model_contacts(self, agent_id: int, msg: Contacts) -> None:
@@ -125,6 +146,7 @@ class SimBridgeNode(Node):
         self.accels[agent_id][1] = msg.linear.y
 
     def on_reset_poses(self, msg: PoseArray) -> None:
+        self.has_received_reset = True
         for idx, pose in enumerate(msg.poses):
             if idx not in self.positions:
                 continue
@@ -144,14 +166,25 @@ class SimBridgeNode(Node):
         pose = Pose()
         pose.position.x = float(pos[0])
         pose.position.y = float(pos[1])
-        pose.position.z = 0.7
+        pose.position.z = self.fixed_z
         yaw = math.atan2(float(vel[1]), float(vel[0])) if np.linalg.norm(vel) > 1e-6 else 0.0
         pose.orientation.z = math.sin(yaw / 2.0)
         pose.orientation.w = math.cos(yaw / 2.0)
         req.pose = pose
         self.set_pose_client.call_async(req)
 
+    def _speed_limit_for_agent(self, agent_id: int) -> float:
+        if agent_id < self.num_pursuers:
+            return self.pursuer_max_speed if self.pursuer_max_speed > 0.0 else self.max_speed
+        return self.evader_max_speed if self.evader_max_speed > 0.0 else self.max_speed
+
     def control_step(self) -> None:
+        if self.control_requires_reset and not self.has_received_reset:
+            return
+
+        if self.model_ready and not all(self.model_ready.values()):
+            return
+
         for agent_id, model_name in self.agent_names:
             if not self.model_ready.get(agent_id, False):
                 continue
@@ -163,8 +196,9 @@ class SimBridgeNode(Node):
             vel = vel + acc * self.controller_dt
             vel = vel * max(0.0, 1.0 - self.linear_drag * self.controller_dt)
             speed = float(np.linalg.norm(vel))
-            if speed > self.max_speed:
-                vel = vel * (self.max_speed / speed)
+            speed_limit = self._speed_limit_for_agent(agent_id)
+            if speed > speed_limit:
+                vel = vel * (speed_limit / speed)
 
             pos = pos + vel * self.controller_dt
             pos[0] = float(np.clip(pos[0], -self.world_half_extent, self.world_half_extent))

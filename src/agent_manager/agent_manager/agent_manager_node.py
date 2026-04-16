@@ -1,6 +1,6 @@
 import math
 import random
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from geometry_msgs.msg import Pose, PoseArray
 import rclpy
@@ -8,7 +8,7 @@ from ros_gz_interfaces.msg import Entity
 from ros_gz_interfaces.srv import SetEntityPose
 from rclpy.node import Node
 from std_msgs.msg import Int8
-from visualization_msgs.msg import MarkerArray
+from visualization_msgs.msg import Marker, MarkerArray
 
 
 class AgentManagerNode(Node):
@@ -17,13 +17,17 @@ class AgentManagerNode(Node):
 		self.declare_parameter("num_pursuers", 5)
 		self.declare_parameter("num_evaders", 1)
 		self.declare_parameter("safe_spawn_distance", 1.5)
+		self.declare_parameter("collision_distance", 0.8)
+		self.declare_parameter("capture_radius", 2.0)
+		self.declare_parameter("world_half_extent", 10.0)
 		self.declare_parameter("spawn_half_extent", 9.0)
 		self.declare_parameter("spawn_attempts", 300)
+		self.declare_parameter("spawn_z", 0.7)
 		self.declare_parameter("world_name", "urban")
 		self.declare_parameter("pursuer_name_prefix", "pursuer")
 		self.declare_parameter("evader_name_prefix", "evader")
 
-		self.obstacles: List[Tuple[float, float, float, float]] = []
+		self.obstacles: List[Tuple[float, float, float, float, bool]] = []
 		self.initial_poses: List[Pose] = []
 		self.last_reset_poses: List[Pose] = []
 
@@ -37,17 +41,30 @@ class AgentManagerNode(Node):
 
 		self.num_pursuers = self.get_parameter("num_pursuers").get_parameter_value().integer_value
 		self.num_evaders = self.get_parameter("num_evaders").get_parameter_value().integer_value
+		self.total_agents = self.num_pursuers + self.num_evaders
+		self.spawn_z = self.get_parameter("spawn_z").get_parameter_value().double_value
+
 		self.agent_model_names = self._build_agent_model_names()
 
 	def _build_agent_model_names(self) -> List[str]:
 		pursuer_prefix = self.get_parameter("pursuer_name_prefix").get_parameter_value().string_value
 		evader_prefix = self.get_parameter("evader_name_prefix").get_parameter_value().string_value
+
 		names: List[str] = []
 		for i in range(self.num_pursuers):
 			names.append(f"{pursuer_prefix}_{i}")
 		for i in range(self.num_evaders):
 			names.append(f"{evader_prefix}_{i}")
 		return names
+
+	def _collision_distance(self) -> float:
+		collision_distance = self.get_parameter("collision_distance").get_parameter_value().double_value
+		if collision_distance > 0.0:
+			return collision_distance
+		return self.get_parameter("safe_spawn_distance").get_parameter_value().double_value
+
+	def _is_pursuer(self, agent_id: int) -> bool:
+		return agent_id < self.num_pursuers
 
 	def on_obstacles(self, msg: MarkerArray) -> None:
 		self.obstacles = []
@@ -58,55 +75,127 @@ class AgentManagerNode(Node):
 					marker.pose.position.y,
 					marker.scale.x,
 					marker.scale.y,
+					marker.type == Marker.CYLINDER,
 				)
 			)
-		self.get_logger().info(f"Cached {len(self.obstacles)} obstacles for safe spawn checks")
-		if not self.initial_poses:
-			self.initial_poses = self._sample_pose_set()
+		self.get_logger().info(f"Cached {len(self.obstacles)} obstacles for collision-distance spawn checks")
 
-	def _sample_safe_pose(self) -> Optional[Pose]:
-		safe_spawn_distance = self.get_parameter("safe_spawn_distance").get_parameter_value().double_value
-		half_extent = self.get_parameter("spawn_half_extent").get_parameter_value().double_value
+	def _obstacle_clearance_ok(self, x: float, y: float, collision_distance: float) -> bool:
+		for ox, oy, sx, sy, is_cylinder in self.obstacles:
+			if is_cylinder:
+				radius = max(sx, sy) / 2.0
+				center_dist = math.hypot(x - ox, y - oy)
+				surface_dist = center_dist - radius
+				if surface_dist < collision_distance:
+					return False
+			else:
+				half_x = sx / 2.0
+				half_y = sy / 2.0
+				dx = max(abs(x - ox) - half_x, 0.0)
+				dy = max(abs(y - oy) - half_y, 0.0)
+				surface_dist = math.hypot(dx, dy)
+				if surface_dist < collision_distance:
+					return False
+		return True
+
+	def _pairwise_clearance_ok(
+		self,
+		agent_id: int,
+		x: float,
+		y: float,
+		placed: Dict[int, Tuple[float, float]],
+		collision_distance: float,
+	) -> bool:
+		capture_radius = self.get_parameter("capture_radius").get_parameter_value().double_value
+
+		for other_id, (ox, oy) in placed.items():
+			d = math.hypot(x - ox, y - oy)
+			if d < collision_distance:
+				return False
+
+			is_cross_role = self._is_pursuer(agent_id) != self._is_pursuer(other_id)
+			if is_cross_role and d <= (capture_radius + collision_distance):
+				return False
+		return True
+
+	def _boundary_ok(self, x: float, y: float, collision_distance: float) -> bool:
+		world_half_extent = self.get_parameter("world_half_extent").get_parameter_value().double_value
+		margin = max(0.0, world_half_extent - collision_distance)
+		return abs(x) <= margin and abs(y) <= margin
+
+	def _sample_safe_pose(
+		self,
+		agent_id: int,
+		placed: Dict[int, Tuple[float, float]],
+	) -> Optional[Pose]:
+		collision_distance = self._collision_distance()
+		spawn_half_extent = self.get_parameter("spawn_half_extent").get_parameter_value().double_value
+		world_half_extent = self.get_parameter("world_half_extent").get_parameter_value().double_value
 		attempts = self.get_parameter("spawn_attempts").get_parameter_value().integer_value
 
-		for _ in range(attempts):
-			x = random.uniform(-half_extent, half_extent)
-			y = random.uniform(-half_extent, half_extent)
+		sample_half_extent = min(spawn_half_extent, max(0.1, world_half_extent - collision_distance))
+
+		for _ in range(max(1, attempts)):
+			x = random.uniform(-sample_half_extent, sample_half_extent)
+			y = random.uniform(-sample_half_extent, sample_half_extent)
 			yaw = random.uniform(-math.pi, math.pi)
 
-			if self._point_in_forbidden_zone(x, y, safe_spawn_distance):
+			if not self._boundary_ok(x, y, collision_distance):
+				continue
+			if not self._obstacle_clearance_ok(x, y, collision_distance):
+				continue
+			if not self._pairwise_clearance_ok(agent_id, x, y, placed, collision_distance):
 				continue
 
 			pose = Pose()
 			pose.position.x = x
 			pose.position.y = y
-			pose.position.z = 0.6
+			pose.position.z = self.spawn_z
 			pose.orientation.z = math.sin(yaw / 2.0)
 			pose.orientation.w = math.cos(yaw / 2.0)
 			return pose
 
 		return None
 
-	def _sample_pose_set(self) -> List[Pose]:
-		all_poses: List[Pose] = []
-		total = self.num_pursuers + self.num_evaders
-		for _ in range(total):
-			pose = self._sample_safe_pose()
-			if pose is None:
-				self.get_logger().warning("Failed to sample a safe pose; using origin fallback")
-				pose = Pose()
-				pose.position.z = 0.6
-				pose.orientation.w = 1.0
-			all_poses.append(pose)
-		return all_poses
+	def _fallback_pose(self, idx: int) -> Pose:
+		# Fallback: deterministic spread near corners to reduce overlap risk.
+		anchors = [
+			(-8.5, -8.5),
+			(-8.5, 8.5),
+			(8.5, -8.5),
+			(8.5, 8.5),
+			(0.0, -8.5),
+			(0.0, 8.5),
+			(-8.5, 0.0),
+			(8.5, 0.0),
+		]
+		x, y = anchors[idx % len(anchors)]
+		pose = Pose()
+		pose.position.x = x
+		pose.position.y = y
+		pose.position.z = self.spawn_z
+		pose.orientation.w = 1.0
+		return pose
 
-	def _point_in_forbidden_zone(self, x: float, y: float, safe_margin: float) -> bool:
-		for ox, oy, sx, sy in self.obstacles:
-			dx = abs(x - ox)
-			dy = abs(y - oy)
-			if dx <= (sx / 2.0 + safe_margin) and dy <= (sy / 2.0 + safe_margin):
-				return True
-		return False
+	def _sample_pose_set(self) -> List[Pose]:
+		poses: List[Pose] = [Pose() for _ in range(self.total_agents)]
+		placed: Dict[int, Tuple[float, float]] = {}
+
+		# 先放 evader，再放 pursuer，确保 pursuer 不会初始落在 capture_radius 内。
+		sample_order = list(range(self.num_pursuers, self.total_agents)) + list(range(self.num_pursuers))
+
+		for agent_id in sample_order:
+			pose = self._sample_safe_pose(agent_id, placed)
+			if pose is None:
+				self.get_logger().warning(
+					f"Failed to sample safe pose for agent_{agent_id}; using deterministic fallback"
+				)
+				pose = self._fallback_pose(agent_id)
+
+			poses[agent_id] = pose
+			placed[agent_id] = (pose.position.x, pose.position.y)
+
+		return poses
 
 	def _call_set_pose(self, model_name: str, pose: Pose) -> None:
 		if not self.set_pose_client.wait_for_service(timeout_sec=0.2):
@@ -133,7 +222,9 @@ class AgentManagerNode(Node):
 
 	def _apply_pose_set(self, poses: List[Pose]) -> None:
 		for model_name, pose in zip(self.agent_model_names, poses):
+			pose.position.z = self.spawn_z
 			self._call_set_pose(model_name, pose)
+
 		debug_msg = PoseArray()
 		debug_msg.header.frame_id = "world"
 		debug_msg.poses = poses
@@ -142,6 +233,7 @@ class AgentManagerNode(Node):
 
 	def on_reset_agents(self, msg: Int8) -> None:
 		mode = msg.data
+
 		if not self.initial_poses:
 			self.initial_poses = self._sample_pose_set()
 
@@ -149,7 +241,7 @@ class AgentManagerNode(Node):
 			self.get_logger().info("Reset mode=1: restore initial poses")
 			self._apply_pose_set(self.initial_poses)
 		elif mode == 2:
-			self.get_logger().info("Reset mode=2: sample safe random poses")
+			self.get_logger().info("Reset mode=2: sample collision-distance random poses")
 			new_poses = self._sample_pose_set()
 			self._apply_pose_set(new_poses)
 		else:

@@ -1,6 +1,6 @@
 import math
 from functools import partial
-from typing import Dict
+from typing import Dict, Optional
 
 from nav_msgs.msg import Odometry
 import rclpy
@@ -19,6 +19,10 @@ class TrainingCoordinatorNode(Node):
         self.declare_parameter("collision_penalty", -2.0)
         self.declare_parameter("capture_radius", 2.0)
         self.declare_parameter("capture_steps", 5)
+        self.declare_parameter("initial_reset_delay_sec", 5.0)
+        self.declare_parameter("reset_agents_delay_sec", 0.4)
+        self.declare_parameter("reset_grace_steps", 12)
+        self.declare_parameter("always_reset_world", True)
 
         self.num_pursuers = self.get_parameter("num_pursuers").get_parameter_value().integer_value
         self.num_evaders = self.get_parameter("num_evaders").get_parameter_value().integer_value
@@ -33,6 +37,15 @@ class TrainingCoordinatorNode(Node):
         self.collision_events = 0
         self.collision_penalty_total = 0.0
         self.odom_states: Dict[int, Odometry] = {}
+        self.startup_reset_done = False
+        self.reset_grace_remaining = 0
+        self.pending_agent_reset_mode: Optional[int] = None
+        self.pending_agent_reset_reason = ""
+        self.pending_agent_reset_time = 0.0
+
+        delay_sec = self.get_parameter("initial_reset_delay_sec").get_parameter_value().double_value
+        now_sec = self.get_clock().now().nanoseconds * 1e-9
+        self.startup_reset_deadline = now_sec + max(0.0, delay_sec)
 
         total_agents = self.num_pursuers + self.num_evaders
         for agent_id in range(total_agents):
@@ -45,10 +58,63 @@ class TrainingCoordinatorNode(Node):
         self.odom_states[agent_id] = msg
 
     def on_collision(self, _agent_id: int, msg: Bool) -> None:
+        if not self.startup_reset_done:
+            return
+        if self.reset_grace_remaining > 0:
+            return
         if msg.data:
             self.collision_events += 1
             penalty = self.get_parameter("collision_penalty").get_parameter_value().double_value
             self.collision_penalty_total += penalty
+
+    def _agent_reset_mode(self, reset_policy: int) -> int:
+        return 1 if reset_policy == 1 else 2
+
+    def _publish_agent_reset(self, mode: int, reason: str) -> None:
+        msg = Int8()
+        msg.data = mode
+        self.reset_agents_pub.publish(msg)
+        self.get_logger().info(f"Published /scheduler/reset_agents with mode={mode} ({reason})")
+
+    def _schedule_agent_reset(self, mode: int, reason: str) -> None:
+        now_sec = self.get_clock().now().nanoseconds * 1e-9
+        delay = self.get_parameter("reset_agents_delay_sec").get_parameter_value().double_value
+        if delay <= 0.0:
+            self._publish_agent_reset(mode, reason)
+            return
+
+        self.pending_agent_reset_mode = mode
+        self.pending_agent_reset_reason = reason
+        self.pending_agent_reset_time = now_sec + delay
+
+    def _flush_pending_agent_reset(self) -> None:
+        if self.pending_agent_reset_mode is None:
+            return
+
+        now_sec = self.get_clock().now().nanoseconds * 1e-9
+        if now_sec < self.pending_agent_reset_time:
+            return
+
+        self._publish_agent_reset(self.pending_agent_reset_mode, self.pending_agent_reset_reason)
+        self.pending_agent_reset_mode = None
+        self.pending_agent_reset_reason = ""
+        self.pending_agent_reset_time = 0.0
+
+    def _trigger_reset(self, reset_policy: int, reason: str, startup: bool = False) -> None:
+        always_reset_world = self.get_parameter("always_reset_world").get_parameter_value().bool_value
+        publish_world_reset = startup or always_reset_world or reset_policy == 3
+
+        if publish_world_reset:
+            self.reset_world_pub.publish(Empty())
+            self.get_logger().info(f"Published /scheduler/reset_world ({reason})")
+
+        mode = self._agent_reset_mode(reset_policy)
+        self._schedule_agent_reset(mode, reason)
+
+        self.reset_grace_remaining = max(
+            0,
+            self.get_parameter("reset_grace_steps").get_parameter_value().integer_value,
+        )
 
     def _is_capture(self) -> bool:
         capture_radius = self.get_parameter("capture_radius").get_parameter_value().double_value
@@ -95,6 +161,21 @@ class TrainingCoordinatorNode(Node):
         if self.current_episode >= max_episodes:
             return
 
+        self._flush_pending_agent_reset()
+
+        if not self.startup_reset_done:
+            now_sec = self.get_clock().now().nanoseconds * 1e-9
+            if now_sec < self.startup_reset_deadline:
+                return
+            self._trigger_reset(reset_policy, reason="startup", startup=True)
+            self.startup_reset_done = True
+            self.get_logger().info("Startup reset done, waiting reset grace before Episode 1")
+            return
+
+        if self.reset_grace_remaining > 0:
+            self.reset_grace_remaining -= 1
+            return
+
         self.current_step += 1
         if self._is_capture():
             self.capture_streak += 1
@@ -116,15 +197,7 @@ class TrainingCoordinatorNode(Node):
             f"Episode {self.current_episode} done reason={done_reason}, apply reset policy {reset_policy}"
         )
 
-        if reset_policy == 3:
-            self.reset_world_pub.publish(Empty())
-            self.get_logger().info("Published /scheduler/reset_world")
-
-        mode = 1 if reset_policy == 1 else 2
-        msg = Int8()
-        msg.data = mode
-        self.reset_agents_pub.publish(msg)
-        self.get_logger().info(f"Published /scheduler/reset_agents with mode={mode}")
+        self._trigger_reset(reset_policy, reason=f"episode_{self.current_episode}_done")
 
         self.current_step = 0
         self.capture_streak = 0

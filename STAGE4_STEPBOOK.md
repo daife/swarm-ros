@@ -1,60 +1,35 @@
-# 第四阶段步骤书（训练产物验收与最优权重固化）
+# STAGE4 步骤书：追逃参数解耦、高度锁定与文档收敛
 
-目标：在第三阶段基础上，完成可复现训练与最优权重验证，达到“可真正落地训练”。
+目标：完成 pursuer/evader 动力学参数解耦，并把脚本与文档同步到新行为。
 
-## 1. 执行目标
+## 1. 代码改造点
 
-1. 在 mock 后端运行有限轮训练（例如 8~20 episodes）。
-2. 验证日志出现策略优化和 best checkpoint 刷新。
-3. 验证磁盘产物包含 `*_latest.pth` 与 `*_best.pth`。
-4. 输出训练运行命令与后续迭代方式。
+1. sim_bridge 参数扩展：
+   - `pursuer_max_speed`、`evader_max_speed`。
+2. rl_policy 参数扩展：
+   - `pursuer_max_accel`、`evader_max_accel`。
+3. z 轴锁定：
+   - 控制回写固定 z。
+   - 对外发布 odom 时将 z 速度置 0。
+4. launch 与 bash 参数透传：
+   - 新增以上 4 个参数并写入脚本。
+5. README 对齐：
+   - 更新参数表与 reset 逻辑说明。
 
-## 2. 执行清单
+## 2. 验证标准
 
-### 2.1 训练执行
+1. pursuer/evader 可设置不同 max_speed 和 max_accel。
+2. 运行中 z 方向速度保持 0（至少对外 odom 与控制逻辑层面为 0）。
+3. 文档命令与脚本可直接启动。
 
-- [x] 使用 `env_backend:=mock` 运行训练。
-- [x] 指定 `max_episodes` 和 `max_steps` 使训练在短时间完成。
+## 3. 执行清单
 
-### 2.2 产物验收
+- [x] 改造 sim_bridge 速度参数
+- [x] 改造 rl_policy 加速度参数
+- [x] 更新 launch/bash/README
+- [x] 完整构建与训练冒烟测试
 
-- [x] 检查 `artifacts/checkpoints` 目录。
-- [x] 确认 `pursuer_policy_latest.pth` 存在。
-- [x] 确认 `pursuer_policy_best.pth` 存在。
+## 4. 运行中修正
 
-### 2.3 结论与下一迭代
-
-- [x] 记录本轮可复现命令。
-- [x] 记录下一阶段（真实 Gazebo 训练）入口。
-
-## 3. 可复现命令
-
-```bash
-cd ~/swarm-ros
-source ./env.sh
-colcon build --base-paths src
-source install/setup.bash
-ros2 launch swarm_bringup training_launch.py \
-	env_backend:=mock \
-	max_episodes:=6 \
-	max_steps:=40 \
-	reset_policy:=2 \
-	pursuer_train_mode:=train_scratch \
-	checkpoint_dir:=artifacts/checkpoints
-```
-
-## 4. 下一阶段入口（Gazebo 实训）
-
-```bash
-cd ~/swarm-ros
-source ./env.sh
-source install/setup.bash
-ros2 launch swarm_bringup training_launch.py \
-	env_backend:=gazebo \
-	max_episodes:=200 \
-	max_steps:=120 \
-	reset_policy:=2 \
-	pursuer_train_mode:=train_load \
-	pursuer_weights:=artifacts/checkpoints/pursuer_policy_best.pth \
-	checkpoint_dir:=artifacts/checkpoints
-```
+1. sim_bridge 增加 `control_requires_reset` 与“全 agent odom 就绪”门控，避免启动期姿态回写竞争。
+2. rl_policy 不再把 `/scheduler/reset_agents` 直接当作 done 信号，避免启动期出现虚假 `reason=0` 回合。
