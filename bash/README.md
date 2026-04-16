@@ -100,18 +100,11 @@ cd ~/swarm-ros
 ./bash/24_training_coordinator_node.sh
 ```
 
-## 4. Mock 后端替换说明
-
-如果不用 Gazebo，而是 mock 环境：
-
-1. 不启动 `10_gazebo_gui.sh`、`11_parameter_bridge.sh`
-2. 用 `22_mock_env_node.sh` 替换 `22_sim_bridge_node.sh`
-
-## 5. 快速停止
+## 4. 快速停止
 
 每个终端 `Ctrl+C` 即可；建议先停 `24_training_coordinator_node.sh`，再停 `23_rl_policy_node.sh`，最后停仿真相关进程。
 
-## 6. 终端手动发布控制命令
+## 5. 终端手动发布控制命令
 
 以下命令可在任意已 `source env.sh && source install/setup.bash` 的终端执行。
 

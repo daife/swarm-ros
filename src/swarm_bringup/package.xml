@@ -16,7 +16,6 @@
   <exec_depend>world_manager</exec_depend>
   <exec_depend>agent_manager</exec_depend>
   <exec_depend>rl_policy</exec_depend>
-  <exec_depend>mock_env</exec_depend>
   <exec_depend>sim_bridge</exec_depend>
   <exec_depend>training_coordinator</exec_depend>
 

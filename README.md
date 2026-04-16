@@ -1,9 +1,6 @@
 # game_of_drones_rl ROS 2 仿真与训练系统说明
 
-本系统用于多无人机追捕-逃避博弈训练，支持两种后端：
-
-- Gazebo Harmonic 真仿真后端
-- Mock 运动学后端（用于快速迭代训练）
+本系统用于多无人机追捕-逃避博弈训练，默认使用 Gazebo Harmonic 真仿真后端。
 
 核心目标：
 
@@ -192,33 +189,7 @@
 - Pub: /agent_i/odom
 - Pub: /agent_i/collision
 
-### 2.4 mock_env
-
-功能：无 Gazebo 时提供运动学环境，便于快速训练与回归。
-
-参数：
-
-| 参数名 | 类型 | 默认值 | 说明 |
-| --- | --- | --- | --- |
-| num_pursuers | int | 5 | 追捕者数量 |
-| num_evaders | int | 1 | 逃避者数量 |
-| dt | float | 0.05 | 积分周期 |
-| world_half_extent | float | 10.0 | 世界边界 |
-| max_speed | float | 3.0 | 速度上限 |
-| linear_drag | float | 0.15 | 阻尼 |
-| spawn_half_extent | float | 8.0 | 初始采样范围 |
-
-参数细化说明：
-
-1. `dt`:
-  - 常用 `0.03 ~ 0.1`。
-  - 过大时积分误差明显，过小时训练速度变慢。
-2. `spawn_half_extent`:
-  - 建议略小于 `world_half_extent`，给边界留缓冲。
-3. `max_speed` 与 `linear_drag`:
-  - 与 Gazebo 端尽量对齐，便于从 mock 迁移到真仿真。
-
-### 2.5 rl_policy
+### 2.4 rl_policy
 
 功能：
 
@@ -308,7 +279,7 @@ checkpoint 产物：
 - <prefix>_best.pth
 - <prefix>_evader_best.pth
 
-### 2.6 training_coordinator
+### 2.5 training_coordinator
 
 功能：episode/step 调度、done 判定、重置时序下发、指标发布。
 
@@ -407,8 +378,7 @@ world 已包含：
 
 | 参数名 | 默认值 | 说明 |
 | --- | --- | --- |
-| env_backend | mock | mock 或 gazebo |
-| gazebo_gui | false | true 开图形界面，false 无图形 |
+| gazebo_gui | true | true 开图形界面，false 无图形 |
 | world_name | urban | Gazebo world 名 |
 | world_sdf | 内置 urban.world | Gazebo world 文件路径 |
 | num_pursuers | 5 | 追捕者数量 |
@@ -450,24 +420,16 @@ world 已包含：
 | initial_reset_delay_sec | 5.0 | 启动后首次 reset 延迟 |
 | reset_agents_delay_sec | 0.4 | world reset 到 agent reset 延迟 |
 | reset_grace_steps | 12 | reset 后碰撞忽略步数 |
-| mock_dt | 0.05 | mock 后端积分步长 |
-| mock_max_speed | 3.0 | mock 后端速度上限 |
-| mock_linear_drag | 0.15 | mock 后端阻尼 |
-| mock_spawn_half_extent | 8.0 | mock 初始采样半径 |
-
 Launch 参数细化说明：
 
-1. `env_backend`:
-  - `mock`: 纯运动学，训练快，适合算法迭代。
-  - `gazebo`: 真仿真，结果更贴近真实动力学。
-2. `gazebo_gui`:
+1. `gazebo_gui`:
   - `true` 方便观察行为与调试。
   - `false` 适合长时训练与服务器运行。
-3. `pursuer_*` 与 `evader_*` 参数：
+2. `pursuer_*` 与 `evader_*` 参数：
   - 两组参数可独立设置，支持“一方训练一方冻结”。
-4. `checkpoint_dir`:
+3. `checkpoint_dir`:
   - 建议为实验分目录，如 `artifacts/checkpoints/exp_20260415`，避免覆盖。
-5. `gazebo_controller_*`:
-  - 这组参数直接透传给 `sim_bridge` 控制器，建议与 mock 端动力学参数保持一致。
+4. `gazebo_controller_*`:
+  - 这组参数直接透传给 `sim_bridge` 控制器，建议与场景尺度和策略动作上限一起联调。
 
 

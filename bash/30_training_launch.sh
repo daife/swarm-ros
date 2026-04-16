@@ -5,10 +5,9 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONFIG_FILE="${1:-}"
 source "${SCRIPT_DIR}/_load_config.sh" "${CONFIG_FILE}"
 
-echo "[30_training_launch] backend=${ENV_BACKEND}, gui=${GAZEBO_GUI}, world=${WORLD_NAME}"
+echo "[30_training_launch] backend=gazebo, gui=${GAZEBO_GUI}, world=${WORLD_NAME}"
 
 LAUNCH_ARGS=(
-  "env_backend:=${ENV_BACKEND}"
   "gazebo_gui:=${GAZEBO_GUI}"
   "world_name:=${WORLD_NAME}"
   "world_sdf:=${WORLD_SDF}"
@@ -77,10 +76,6 @@ LAUNCH_ARGS=(
   "reset_agents_delay_sec:=${RESET_AGENTS_DELAY_SEC}"
   "reset_grace_steps:=${RESET_GRACE_STEPS}"
   "always_reset_world:=${ALWAYS_RESET_WORLD}"
-  "mock_dt:=${MOCK_DT}"
-  "mock_max_speed:=${MOCK_MAX_SPEED}"
-  "mock_linear_drag:=${MOCK_LINEAR_DRAG}"
-  "mock_spawn_half_extent:=${MOCK_SPAWN_HALF_EXTENT}"
 )
 
 if [[ -n "${PURSUER_WEIGHTS}" ]]; then

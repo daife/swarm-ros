@@ -14,8 +14,7 @@ set -u
 # ---------- 10_gazebo_gui.sh ----------
 export WORLD_NAME="${WORLD_NAME:-urban}"                    # 可选: Gazebo world 名称
 export WORLD_SDF="${WORLD_SDF:-${ROOT_DIR}/src/swarm_bringup/worlds/urban.world}"  # 可选: world 文件路径
-export ENV_BACKEND="${ENV_BACKEND:-mock}"                # 可选: mock/gazebo（用于与 launch 参数对齐）
-export GAZEBO_GUI="${GAZEBO_GUI:-false}"                 # 可选: true/false（用于与 launch 参数对齐）
+export GAZEBO_GUI="${GAZEBO_GUI:-true}"                    # 可选: true/false（默认图形化）
 
 # ---------- 11_parameter_bridge.sh ----------
 export NUM_PURSUERS="${NUM_PURSUERS:-5}"                   # 可选: 追捕者数量
@@ -25,15 +24,15 @@ export EVADER_PREFIX="${EVADER_PREFIX:-evader}"            # 可选: 逃避者�
 
 # ---------- 20_world_manager_node.sh ----------
 export WORLD_MODE="${WORLD_MODE:-random}"                  # 可选: fixed/random
-export SEED_MODE="${SEED_MODE:-none}"                      # 可选: single/sequence/none(纯随机种子)
+export SEED_MODE="${SEED_MODE:-sequence}"                      # 可选: single/sequence/none(纯随机种子)
 export SEED_VALUE="${SEED_VALUE:-42}"                      # 可选: 固定随机种子
 export SEED_SEQUENCE="${SEED_SEQUENCE:-[42, 100, 777, 2026]}"  # 可选: 种子序列(YAML数组)
-export OBSTACLE_DENSITY="${OBSTACLE_DENSITY:-0.3}"         # 可选: 障碍密度
+export OBSTACLE_DENSITY="${OBSTACLE_DENSITY:-0.9}"         # 可选: 障碍密度
 export WORLD_HALF_EXTENT="${WORLD_HALF_EXTENT:-10.0}"      # 可选: 世界半边长
 export OBSTACLE_MODEL_PACKAGE="${OBSTACLE_MODEL_PACKAGE:-swarm_bringup}"  # 可选: 障碍模型来源包
-export OBSTACLE_POOL_BOX="${OBSTACLE_POOL_BOX:-8}"         # 可选: 方形障碍池数量
-export OBSTACLE_POOL_RECT="${OBSTACLE_POOL_RECT:-8}"       # 可选: 长方体障碍池数量
-export OBSTACLE_POOL_CYLINDER="${OBSTACLE_POOL_CYLINDER:-8}"   # 可选: 圆柱障碍池数量
+export OBSTACLE_POOL_BOX="${OBSTACLE_POOL_BOX:-4}"         # 可选: 方形障碍池数量
+export OBSTACLE_POOL_RECT="${OBSTACLE_POOL_RECT:-4}"       # 可选: 长方体障碍池数量
+export OBSTACLE_POOL_CYLINDER="${OBSTACLE_POOL_CYLINDER:-4}"   # 可选: 圆柱障碍池数量
 export OBSTACLE_STAGING_X="${OBSTACLE_STAGING_X:-1000.0}"  # 可选: 障碍 staging 区 x
 export OBSTACLE_STAGING_Y="${OBSTACLE_STAGING_Y:-1000.0}"  # 可选: 障碍 staging 区 y
 export OBSTACLE_STAGING_STRIDE="${OBSTACLE_STAGING_STRIDE:-1.5}" # 可选: 障碍 staging 间距
@@ -58,12 +57,6 @@ export GAZEBO_PURSUER_MAX_SPEED="${GAZEBO_PURSUER_MAX_SPEED:--1.0}"    # 可选:
 export GAZEBO_EVADER_MAX_SPEED="${GAZEBO_EVADER_MAX_SPEED:--1.0}"      # 可选: evader 速度上限，<=0则回退 GAZEBO_MAX_SPEED
 export GAZEBO_LINEAR_DRAG="${GAZEBO_LINEAR_DRAG:-0.15}"                # 可选: 线性阻尼
 export GAZEBO_CONTROL_REQUIRES_RESET="${GAZEBO_CONTROL_REQUIRES_RESET:-true}" # 可选: 首次 reset 前是否禁止控制回写
-
-# ---------- 22_mock_env_node.sh ----------
-export MOCK_DT="${MOCK_DT:-0.05}"                         # 可选: mock 环境积分步长
-export MOCK_MAX_SPEED="${MOCK_MAX_SPEED:-3.0}"            # 可选: mock 速度上限
-export MOCK_LINEAR_DRAG="${MOCK_LINEAR_DRAG:-0.15}"       # 可选: mock 阻尼
-export MOCK_SPAWN_HALF_EXTENT="${MOCK_SPAWN_HALF_EXTENT:-8.0}" # 可选: mock 初始采样半径
 
 # ---------- 23_rl_policy_node.sh ----------
 export PURSUER_ALGO="${PURSUER_ALGO:-maddpg}"             # 可选: maddpg/cbc_tp_net(占位)

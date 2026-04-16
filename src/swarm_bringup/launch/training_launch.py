@@ -55,7 +55,6 @@ def _create_bridge_process(context, *args, **kwargs):
 
 
 def generate_launch_description() -> LaunchDescription:
-    env_backend = LaunchConfiguration("env_backend")
     gazebo_gui = LaunchConfiguration("gazebo_gui")
     world_name = LaunchConfiguration("world_name")
     world_sdf = LaunchConfiguration("world_sdf")
@@ -126,19 +125,8 @@ def generate_launch_description() -> LaunchDescription:
     reset_agents_delay_sec = LaunchConfiguration("reset_agents_delay_sec")
     reset_grace_steps = LaunchConfiguration("reset_grace_steps")
     always_reset_world = LaunchConfiguration("always_reset_world")
-    mock_dt = LaunchConfiguration("mock_dt")
-    mock_max_speed = LaunchConfiguration("mock_max_speed")
-    mock_linear_drag = LaunchConfiguration("mock_linear_drag")
-    mock_spawn_half_extent = LaunchConfiguration("mock_spawn_half_extent")
-
-    gazebo_condition = IfCondition(PythonExpression(["'", env_backend, "' == 'gazebo'"]))
-    gazebo_gui_condition = IfCondition(
-        PythonExpression(["'", env_backend, "' == 'gazebo' and '", gazebo_gui, "' == 'true'"])
-    )
-    gazebo_headless_condition = IfCondition(
-        PythonExpression(["'", env_backend, "' == 'gazebo' and '", gazebo_gui, "' != 'true'"])
-    )
-    mock_condition = IfCondition(PythonExpression(["'", env_backend, "' == 'mock'"]))
+    gazebo_gui_condition = IfCondition(PythonExpression(["'", gazebo_gui, "' == 'true'"]))
+    gazebo_headless_condition = IfCondition(PythonExpression(["'", gazebo_gui, "' != 'true'"]))
 
     swarm_share = get_package_share_directory("swarm_bringup")
     default_world_path = os.path.join(swarm_share, "worlds", "urban.world")
@@ -147,8 +135,7 @@ def generate_launch_description() -> LaunchDescription:
 
     return LaunchDescription(
         [
-            DeclareLaunchArgument("env_backend", default_value="mock"),
-            DeclareLaunchArgument("gazebo_gui", default_value="false"),
+            DeclareLaunchArgument("gazebo_gui", default_value="true"),
             DeclareLaunchArgument("world_name", default_value="urban"),
             DeclareLaunchArgument("world_sdf", default_value=default_world_path),
             DeclareLaunchArgument("num_pursuers", default_value="5"),
@@ -218,10 +205,6 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("reset_agents_delay_sec", default_value="0.4"),
             DeclareLaunchArgument("reset_grace_steps", default_value="12"),
             DeclareLaunchArgument("always_reset_world", default_value="true"),
-            DeclareLaunchArgument("mock_dt", default_value="0.05"),
-            DeclareLaunchArgument("mock_max_speed", default_value="3.0"),
-            DeclareLaunchArgument("mock_linear_drag", default_value="0.15"),
-            DeclareLaunchArgument("mock_spawn_half_extent", default_value="8.0"),
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(gz_launch_file),
                 launch_arguments={
@@ -236,7 +219,7 @@ def generate_launch_description() -> LaunchDescription:
                 }.items(),
                 condition=gazebo_headless_condition,
             ),
-            OpaqueFunction(function=_create_bridge_process, condition=gazebo_condition),
+            OpaqueFunction(function=_create_bridge_process),
             Node(
                 package="world_manager",
                 executable="world_manager_node",
@@ -326,25 +309,6 @@ def generate_launch_description() -> LaunchDescription:
                         "fixed_z": ParameterValue(fixed_z, value_type=float),
                     }
                 ],
-                condition=gazebo_condition,
-            ),
-            Node(
-                package="mock_env",
-                executable="mock_env_node",
-                name="mock_env_node",
-                output="screen",
-                parameters=[
-                    {
-                        "num_pursuers": ParameterValue(num_pursuers, value_type=int),
-                        "num_evaders": ParameterValue(num_evaders, value_type=int),
-                        "dt": ParameterValue(mock_dt, value_type=float),
-                        "world_half_extent": ParameterValue(world_half_extent, value_type=float),
-                        "max_speed": ParameterValue(mock_max_speed, value_type=float),
-                        "linear_drag": ParameterValue(mock_linear_drag, value_type=float),
-                        "spawn_half_extent": ParameterValue(mock_spawn_half_extent, value_type=float),
-                    }
-                ],
-                condition=mock_condition,
             ),
             Node(
                 package="rl_policy",
