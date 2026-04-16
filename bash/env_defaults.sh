@@ -35,11 +35,11 @@ export WORLD_MODE="${WORLD_MODE:-random}"                   # 可选: fixed/rand
 export SEED_MODE="${SEED_MODE:-sequence}"                      # 可选: single/sequence/none(纯随机种子)
 export SEED_VALUE="${SEED_VALUE:-42}"                      # 可选: 固定随机种子
 export SEED_SEQUENCE="${SEED_SEQUENCE:-[42, 100, 777, 2026]}"  # 可选: 种子序列(YAML数组)
-export OBSTACLE_DENSITY="${OBSTACLE_DENSITY:-0.3}"         # 可选: 障碍密度
+export OBSTACLE_DENSITY="${OBSTACLE_DENSITY:-0.9}"         # 可选: 障碍密度
 export WORLD_HALF_EXTENT="${WORLD_HALF_EXTENT:-10.0}"      # 可选: 世界半边长
-export OBSTACLE_POOL_BOX="${OBSTACLE_POOL_BOX:-8}"         # 可选: 方形障碍池数量
-export OBSTACLE_POOL_RECT="${OBSTACLE_POOL_RECT:-8}"       # 可选: 长方体障碍池数量
-export OBSTACLE_POOL_CYLINDER="${OBSTACLE_POOL_CYLINDER:-8}"   # 可选: 圆柱障碍池数量
+export OBSTACLE_POOL_BOX="${OBSTACLE_POOL_BOX:-3}"         # 可选: 方形障碍池数量
+export OBSTACLE_POOL_RECT="${OBSTACLE_POOL_RECT:-3}"       # 可选: 长方体障碍池数量
+export OBSTACLE_POOL_CYLINDER="${OBSTACLE_POOL_CYLINDER:-3}"   # 可选: 圆柱障碍池数量
 export OBSTACLE_STAGING_X="${OBSTACLE_STAGING_X:-1000.0}"  # 可选: 障碍 staging 区 x
 export OBSTACLE_STAGING_Y="${OBSTACLE_STAGING_Y:-1000.0}"  # 可选: 障碍 staging 区 y
 export OBSTACLE_STAGING_STRIDE="${OBSTACLE_STAGING_STRIDE:-1.5}" # 可选: 障碍 staging 间距
@@ -48,14 +48,17 @@ export OBSTACLE_MIN_CLEARANCE="${OBSTACLE_MIN_CLEARANCE:-0.2}"   # 可选: 障�
 
 # ---------- 21_agent_manager_node.sh ----------
 export COLLISION_DISTANCE="${COLLISION_DISTANCE:-0.8}"     # 可选: 统一碰撞距离约束
-export SAFE_SPAWN_DISTANCE="${SAFE_SPAWN_DISTANCE:-1.5}"   # 可选: 兼容旧参数，建议改用 COLLISION_DISTANCE
 export SPAWN_HALF_EXTENT="${SPAWN_HALF_EXTENT:-9.0}"       # 可选: 出生采样边界半径
 export SPAWN_ATTEMPTS="${SPAWN_ATTEMPTS:-300}"             # 可选: 单个体采样最大尝试次数
-export FIXED_Z="${FIXED_Z:-0.7}"                           # 可选: z 轴固定高度
+export FIXED_Z="${FIXED_Z:-1.0}"                           # 可选: z 轴固定高度
+export AGENT_MODEL_PACKAGE="${AGENT_MODEL_PACKAGE:-swarm_bringup}"  # 可选: agent 模型来源包
+export AGENT_STAGING_X="${AGENT_STAGING_X:-1000.0}"        # 可选: agent staging 区 x
+export AGENT_STAGING_Y="${AGENT_STAGING_Y:-1200.0}"        # 可选: agent staging 区 y
+export AGENT_STAGING_STRIDE="${AGENT_STAGING_STRIDE:-1.5}" # 可选: agent staging 间距
 
 # ---------- 22_sim_bridge_node.sh ----------
 export GAZEBO_CONTROLLER_ENABLED="${GAZEBO_CONTROLLER_ENABLED:-true}"  # 可选: 是否启用控制器
-export GAZEBO_CONTROLLER_DT="${GAZEBO_CONTROLLER_DT:-0.05}"            # 可选: 控制积分周期(s)
+export GAZEBO_CONTROLLER_DT="${GAZEBO_CONTROLLER_DT:-0.02}"            # 可选: 控制积分周期(s)
 export GAZEBO_MAX_SPEED="${GAZEBO_MAX_SPEED:-3.0}"                      # 可选: 速度上限
 export GAZEBO_PURSUER_MAX_SPEED="${GAZEBO_PURSUER_MAX_SPEED:--1.0}"    # 可选: pursuer 速度上限，<=0则回退 GAZEBO_MAX_SPEED
 export GAZEBO_EVADER_MAX_SPEED="${GAZEBO_EVADER_MAX_SPEED:--1.0}"      # 可选: evader 速度上限，<=0则回退 GAZEBO_MAX_SPEED

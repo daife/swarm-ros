@@ -30,5 +30,6 @@
 
 ## 4. 运行中修正
 
-1. 首版首轮 reset 时序过早（agent 还在 spawn），引发 set_pose 失败。
-2. 已加入 `initial_reset_delay_sec` 与 `reset_agents_delay_sec`，确保先 spawn 再 reset。
+1. 本阶段不再保留“agent 尚未 spawn 导致 set_pose 失败”的临时修正说明。
+2. 该问题已转入 STAGE5，通过“agent 由 agent_manager 统一 spawn 到 staging，首轮 reset 再入场”根治。
+

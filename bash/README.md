@@ -1,6 +1,6 @@
-# 多终端手动启动（不使用 launch）
+# 多终端手动启动（调试用途）
 
-本目录用于“按终端顺序手动启动”Gazebo 训练链路，便于你直接在文本编辑器里改参数后快速执行。而不是使用一键式launch文件
+本目录仅用于调试节点，不是推荐训练入口。推荐入口是 `ros2 launch swarm_bringup training_launch.py`。
 
 ## 0. 先修改参数
 
@@ -14,7 +14,7 @@
 4. `MAX_EPISODES` / `MAX_STEPS`
 5. `CHECKPOINT_DIR`
 
-## 1. Gazebo + 桥接 + 模型注入
+## 1. Gazebo + 桥接
 
 终端 T1：
 
@@ -30,12 +30,7 @@ cd ~/swarm-ros
 ./bash/11_parameter_bridge.sh
 ```
 
-终端 T3（等待 T1/T2 日志稳定后再执行）：
-
-```bash
-cd ~/swarm-ros
-./bash/12_spawn_agents.sh
-```
+说明：agent 现在由 `agent_manager` 自动生成到 staging 区，不再需要手工执行 `12_spawn_agents.sh`。
 
 ## 2. 训练节点
 

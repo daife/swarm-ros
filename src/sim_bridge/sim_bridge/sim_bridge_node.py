@@ -21,13 +21,13 @@ class SimBridgeNode(Node):
         self.declare_parameter("evader_name_prefix", "evader")
         self.declare_parameter("world_name", "urban")
         self.declare_parameter("controller_enabled", True)
-        self.declare_parameter("controller_dt", 0.05)
+        self.declare_parameter("controller_dt", 0.02)
         self.declare_parameter("max_speed", 3.0)
         self.declare_parameter("pursuer_max_speed", -1.0)
         self.declare_parameter("evader_max_speed", -1.0)
         self.declare_parameter("linear_drag", 0.15)
         self.declare_parameter("world_half_extent", 10.0)
-        self.declare_parameter("fixed_z", 0.7)
+        self.declare_parameter("fixed_z", 1.0)
         self.declare_parameter("control_requires_reset", True)
 
         num_pursuers = self.get_parameter("num_pursuers").get_parameter_value().integer_value
@@ -137,9 +137,24 @@ class SimBridgeNode(Node):
         self.odom_pubs[agent_id].publish(msg)
 
     def on_model_contacts(self, agent_id: int, msg: Contacts) -> None:
+        if self.control_requires_reset and not self.has_received_reset:
+            out = Bool()
+            out.data = False
+            self.collision_pubs[agent_id].publish(out)
+            return
+
         out = Bool()
-        out.data = len(msg.contacts) > 0
+        out.data = any(self._is_relevant_contact(c) for c in msg.contacts)
         self.collision_pubs[agent_id].publish(out)
+
+    def _is_relevant_contact(self, contact) -> bool:
+        collision1 = getattr(getattr(contact, "collision1", None), "name", "")
+        collision2 = getattr(getattr(contact, "collision2", None), "name", "")
+        text = f"{collision1} {collision2}".lower()
+
+        if "ground_plane" in text:
+            return False
+        return True
 
     def on_cmd_accel(self, agent_id: int, msg: Accel) -> None:
         self.accels[agent_id][0] = msg.linear.x

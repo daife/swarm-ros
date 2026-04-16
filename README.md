@@ -12,7 +12,7 @@
 3. rl_policy 运行 MADDPG（追捕者）+ DDPG（逃避者）策略。
 4. training_coordinator 负责 done 判定和回合重置时序。
 5. sim_bridge 统一 Gazebo 话题，并把加速度指令落实到 Gazebo 实体运动。
-6. swarm_bringup 统一启动、仿真桥接、模型注入、训练参数透传。
+6. swarm_bringup 统一启动、仿真桥接、训练参数透传，并存放 world/model 资产。
 
 ## 1. 逻辑闭环
 
@@ -90,10 +90,14 @@
 | world_half_extent | float | 10.0 | 重置采样边界 |
 | spawn_half_extent | float | 9.0 | 采样区域半边长 |
 | spawn_attempts | int | 300 | 最大采样尝试次数 |
-| spawn_z | float | 0.7 | 重置高度 |
+| spawn_z | float | 1.0 | 重置高度 |
 | world_name | string | urban | Gazebo world 名，用于 set_pose 服务路径 |
 | pursuer_name_prefix | string | pursuer | 追捕者模型名前缀 |
 | evader_name_prefix | string | evader | 逃避者模型名前缀 |
+| agent_model_package | string | swarm_bringup | agent 模型来源包 |
+| agent_staging_x | float | 1000.0 | agent staging 区 x |
+| agent_staging_y | float | 1200.0 | agent staging 区 y |
+| agent_staging_stride | float | 1.5 | agent staging 间距 |
 
 参数细化说明：
 
@@ -109,15 +113,16 @@
   - 常用 `200 ~ 1000`。
   - 障碍密度高时建议增大，避免频繁触发原点回退。
 5. `world_name`:
-  - 必须与 Gazebo 实际 world 名一致，否则 `set_pose` 会失败。
+  - 必须与 Gazebo 实际 world 名一致，否则 `create/set_pose` 会失败。
 6. `pursuer_name_prefix` / `evader_name_prefix`:
-  - 需与模型注入时命名规则一致（如 `pursuer_0`、`evader_0`）。
+  - agent_manager 会按此前缀在启动时生成模型（如 `pursuer_0`、`evader_0`），初始位于 staging。
 
 话题与服务：
 
 - Sub: /world_manager/obstacles
 - Sub: /scheduler/reset_agents (std_msgs/Int8)
 - Pub: /agent_manager/reset_poses (geometry_msgs/PoseArray)
+- Client: /world/<world_name>/create (ros_gz_interfaces/srv/SpawnEntity)
 - Client: /world/<world_name>/set_pose (ros_gz_interfaces/srv/SetEntityPose)
 
 ### 2.3 sim_bridge
@@ -135,13 +140,13 @@
 | num_evaders | int | 1 | 逃避者数量 |
 | world_name | string | urban | Gazebo world 名 |
 | controller_enabled | bool | true | 是否启用加速度控制器 |
-| controller_dt | float | 0.05 | 控制积分周期 |
+| controller_dt | float | 0.02 | 控制积分周期 |
 | max_speed | float | 3.0 | 速度上限 |
 | pursuer_max_speed | float | -1.0 | 追捕者速度上限（<=0 回退 max_speed） |
 | evader_max_speed | float | -1.0 | 逃避者速度上限（<=0 回退 max_speed） |
 | linear_drag | float | 0.15 | 线性阻尼 |
 | world_half_extent | float | 10.0 | 位置边界裁剪 |
-| fixed_z | float | 0.7 | 固定高度 |
+| fixed_z | float | 1.0 | 固定高度 |
 | control_requires_reset | bool | true | 首次 reset 前不执行控制回写 |
 
 参数细化说明：
@@ -166,6 +171,8 @@
   - 应与环境边界一致，避免“看起来卡墙/瞬移”的现象。
 7. `fixed_z`:
   - 控制层会强制 z 恒定，并将发布 odom 的 z 速度置 0。
+8. `ground_plane` 接触过滤：
+  - sim_bridge 会过滤与地面的接触，不将其计入训练碰撞事件。
 
 话题：
 
@@ -372,12 +379,13 @@ SDF 已包含：
 1. 无人机刚体模型（box 机体 + 惯量）。
 2. OdometryPublisher 插件。
 3. Contact sensor。
+4. 已禁用重力（适配 2D 控制与固定高度训练）。
 
 world 已包含：
 
 1. Physics、Sensors、Contact 等系统插件。
 2. 地面与边界墙（训练边界）。
-3. 无预置无人机实体；训练启动时由 launch 动态注入（pursuer_0..4, evader_0）。
+3. 无预置无人机实体；训练启动时由 agent_manager 动态生成到 staging（pursuer_0..4, evader_0）。
 4. 无预置障碍物；障碍由 world_manager 在 reset 时从模型池移入训练区。
 
 ## 4. Launch 参数
@@ -404,16 +412,19 @@ world 已包含：
 | evader_algo | ddpg | 逃避算法 |
 | evader_train_mode | eval_only | 逃避训练模式 |
 | evader_weights | "" | 逃避权重 |
+| agent_staging_x | 1000.0 | agent staging 区 x |
+| agent_staging_y | 1200.0 | agent staging 区 y |
+| agent_staging_stride | 1.5 | agent staging 间距 |
 | pursuer_max_accel | -1.0 | 追捕者最大加速度（<=0 回退 max_accel） |
 | evader_max_accel | -1.0 | 逃避者最大加速度（<=0 回退 max_accel） |
 | checkpoint_dir | artifacts/checkpoints | 权重目录 |
 | gazebo_controller_enabled | true | Gazebo运动控制是否启用 |
-| gazebo_controller_dt | 0.05 | Gazebo控制积分周期 |
+| gazebo_controller_dt | 0.02 | Gazebo控制积分周期 |
 | gazebo_max_speed | 3.0 | Gazebo速度上限 |
 | gazebo_pursuer_max_speed | -1.0 | 追捕者速度上限（<=0 回退 gazebo_max_speed） |
 | gazebo_evader_max_speed | -1.0 | 逃避者速度上限（<=0 回退 gazebo_max_speed） |
 | gazebo_linear_drag | 0.15 | Gazebo阻尼 |
-| fixed_z | 0.7 | 固定高度 |
+| fixed_z | 1.0 | 固定高度 |
 | initial_reset_delay_sec | 5.0 | 启动后首次 reset 延迟 |
 | reset_agents_delay_sec | 0.4 | world reset 到 agent reset 延迟 |
 | reset_grace_steps | 12 | reset 后碰撞忽略步数 |

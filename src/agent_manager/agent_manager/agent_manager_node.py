@@ -2,10 +2,11 @@ import math
 import random
 from typing import Dict, List, Optional, Tuple
 
+from ament_index_python.packages import get_package_share_directory
 from geometry_msgs.msg import Pose, PoseArray
 import rclpy
 from ros_gz_interfaces.msg import Entity
-from ros_gz_interfaces.srv import SetEntityPose
+from ros_gz_interfaces.srv import SetEntityPose, SpawnEntity
 from rclpy.node import Node
 from std_msgs.msg import Int8
 from visualization_msgs.msg import Marker, MarkerArray
@@ -16,7 +17,6 @@ class AgentManagerNode(Node):
 		super().__init__("agent_manager_node")
 		self.declare_parameter("num_pursuers", 5)
 		self.declare_parameter("num_evaders", 1)
-		self.declare_parameter("safe_spawn_distance", 1.5)
 		self.declare_parameter("collision_distance", 0.8)
 		self.declare_parameter("capture_radius", 2.0)
 		self.declare_parameter("world_half_extent", 10.0)
@@ -26,18 +26,27 @@ class AgentManagerNode(Node):
 		self.declare_parameter("world_name", "urban")
 		self.declare_parameter("pursuer_name_prefix", "pursuer")
 		self.declare_parameter("evader_name_prefix", "evader")
+		self.declare_parameter("agent_model_package", "swarm_bringup")
+		self.declare_parameter("agent_staging_x", 1000.0)
+		self.declare_parameter("agent_staging_y", 1200.0)
+		self.declare_parameter("agent_staging_stride", 1.5)
 
 		self.obstacles: List[Tuple[float, float, float, float, bool]] = []
 		self.initial_poses: List[Pose] = []
 		self.last_reset_poses: List[Pose] = []
+		self.pending_reset_mode: Optional[int] = None
+		self.spawned: Dict[str, bool] = {}
+		self.spawn_pending: Dict[str, bool] = {}
 
 		self.create_subscription(MarkerArray, "/world_manager/obstacles", self.on_obstacles, 10)
 		self.create_subscription(Int8, "/scheduler/reset_agents", self.on_reset_agents, 10)
 		self.reset_pose_debug_pub = self.create_publisher(PoseArray, "/agent_manager/reset_poses", 10)
 
-		world_name = self.get_parameter("world_name").get_parameter_value().string_value
-		service_name = f"/world/{world_name}/set_pose"
+		self.world_name = self.get_parameter("world_name").get_parameter_value().string_value
+		service_name = f"/world/{self.world_name}/set_pose"
+		spawn_service_name = f"/world/{self.world_name}/create"
 		self.set_pose_client = self.create_client(SetEntityPose, service_name)
+		self.spawn_client = self.create_client(SpawnEntity, spawn_service_name)
 
 		self.num_pursuers = self.get_parameter("num_pursuers").get_parameter_value().integer_value
 		self.num_evaders = self.get_parameter("num_evaders").get_parameter_value().integer_value
@@ -45,6 +54,8 @@ class AgentManagerNode(Node):
 		self.spawn_z = self.get_parameter("spawn_z").get_parameter_value().double_value
 
 		self.agent_model_names = self._build_agent_model_names()
+		self.agent_specs = self._build_agent_specs()
+		self.create_timer(0.1, self._process_pending_work)
 
 	def _build_agent_model_names(self) -> List[str]:
 		pursuer_prefix = self.get_parameter("pursuer_name_prefix").get_parameter_value().string_value
@@ -57,11 +68,28 @@ class AgentManagerNode(Node):
 			names.append(f"{evader_prefix}_{i}")
 		return names
 
+	def _resolve_model_paths(self) -> Tuple[str, str]:
+		model_pkg = self.get_parameter("agent_model_package").get_parameter_value().string_value
+		share = get_package_share_directory(model_pkg)
+		return (
+			f"{share}/models/pursuer/model.sdf",
+			f"{share}/models/evader/model.sdf",
+		)
+
+	def _build_agent_specs(self) -> List[Tuple[str, str]]:
+		pursuer_sdf, evader_sdf = self._resolve_model_paths()
+		specs: List[Tuple[str, str]] = []
+		for i in range(self.num_pursuers):
+			specs.append((self.agent_model_names[i], pursuer_sdf))
+		for i in range(self.num_evaders):
+			specs.append((self.agent_model_names[self.num_pursuers + i], evader_sdf))
+		return specs
+
 	def _collision_distance(self) -> float:
-		collision_distance = self.get_parameter("collision_distance").get_parameter_value().double_value
-		if collision_distance > 0.0:
-			return collision_distance
-		return self.get_parameter("safe_spawn_distance").get_parameter_value().double_value
+		return max(
+			0.01,
+			self.get_parameter("collision_distance").get_parameter_value().double_value,
+		)
 
 	def _is_pursuer(self, agent_id: int) -> bool:
 		return agent_id < self.num_pursuers
@@ -79,6 +107,65 @@ class AgentManagerNode(Node):
 				)
 			)
 		self.get_logger().info(f"Cached {len(self.obstacles)} obstacles for collision-distance spawn checks")
+
+	def _staging_pose(self, idx: int) -> Pose:
+		staging_x = self.get_parameter("agent_staging_x").get_parameter_value().double_value
+		staging_y = self.get_parameter("agent_staging_y").get_parameter_value().double_value
+		stride = self.get_parameter("agent_staging_stride").get_parameter_value().double_value
+
+		row = idx // 12
+		col = idx % 12
+		pose = Pose()
+		pose.position.x = staging_x + col * stride
+		pose.position.y = staging_y + row * stride
+		pose.position.z = self.spawn_z
+		pose.orientation.w = 1.0
+		return pose
+
+	def _request_spawn_if_needed(self, model_name: str, sdf_path: str, idx: int) -> bool:
+		if self.spawned.get(model_name, False):
+			return True
+		if self.spawn_pending.get(model_name, False):
+			return False
+		if not self.spawn_client.wait_for_service(timeout_sec=0.02):
+			return False
+
+		req = SpawnEntity.Request()
+		req.entity_factory.name = model_name
+		req.entity_factory.allow_renaming = False
+		req.entity_factory.sdf_filename = sdf_path
+		req.entity_factory.pose = self._staging_pose(idx)
+
+		future = self.spawn_client.call_async(req)
+		self.spawn_pending[model_name] = True
+
+		def _on_done(done_future) -> None:
+			self.spawn_pending[model_name] = False
+			try:
+				resp = done_future.result()
+				status_text = ""
+				if resp is not None:
+					status_text = getattr(resp, "status_message", "") or ""
+				if resp is not None and resp.success:
+					self.spawned[model_name] = True
+					self.get_logger().info(f"Spawned agent model in staging: {model_name}")
+				elif "already exists" in status_text.lower():
+					self.spawned[model_name] = True
+					self.get_logger().info(f"Agent model already exists, reuse it: {model_name}")
+				else:
+					self.get_logger().warning(f"Spawn failed for agent model: {model_name}")
+			except Exception as exc:  # pragma: no cover
+				self.get_logger().warning(f"Spawn exception for {model_name}: {exc}")
+
+		future.add_done_callback(_on_done)
+		return False
+
+	def _spawn_all_agents_in_staging(self) -> bool:
+		all_ready = True
+		for idx, (model_name, sdf_path) in enumerate(self.agent_specs):
+			if not self._request_spawn_if_needed(model_name, sdf_path, idx):
+				all_ready = False
+		return all_ready
 
 	def _obstacle_clearance_ok(self, x: float, y: float, collision_distance: float) -> bool:
 		for ox, oy, sx, sy, is_cylinder in self.obstacles:
@@ -231,11 +318,18 @@ class AgentManagerNode(Node):
 		self.reset_pose_debug_pub.publish(debug_msg)
 		self.last_reset_poses = poses
 
-	def on_reset_agents(self, msg: Int8) -> None:
-		mode = msg.data
+	def _process_pending_work(self) -> None:
+		if not self._spawn_all_agents_in_staging():
+			return
+
+		if self.pending_reset_mode is None:
+			return
 
 		if not self.initial_poses:
 			self.initial_poses = self._sample_pose_set()
+
+		mode = self.pending_reset_mode
+		self.pending_reset_mode = None
 
 		if mode == 1:
 			self.get_logger().info("Reset mode=1: restore initial poses")
@@ -246,6 +340,9 @@ class AgentManagerNode(Node):
 			self._apply_pose_set(new_poses)
 		else:
 			self.get_logger().warning(f"Unsupported reset mode: {mode}")
+
+	def on_reset_agents(self, msg: Int8) -> None:
+		self.pending_reset_mode = msg.data
 
 
 def main(args=None) -> None:

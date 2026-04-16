@@ -7,7 +7,6 @@ from launch.actions import (
     ExecuteProcess,
     IncludeLaunchDescription,
     OpaqueFunction,
-    TimerAction,
 )
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
@@ -55,62 +54,6 @@ def _create_bridge_process(context, *args, **kwargs):
     ]
 
 
-def _spawn_agents(context, *args, **kwargs):
-    num_pursuers = int(LaunchConfiguration("num_pursuers").perform(context))
-    num_evaders = int(LaunchConfiguration("num_evaders").perform(context))
-    world_name = LaunchConfiguration("world_name").perform(context)
-
-    package_share = get_package_share_directory("swarm_bringup")
-    pursuer_sdf = os.path.join(package_share, "models", "pursuer", "model.sdf")
-    evader_sdf = os.path.join(package_share, "models", "evader", "model.sdf")
-
-    spawn_actions = []
-    spacing = 1.5
-    x0 = 1000.0
-    y0 = 1200.0
-
-    all_models = []
-    for i in range(num_pursuers):
-        all_models.append((f"pursuer_{i}", pursuer_sdf))
-    for i in range(num_evaders):
-        all_models.append((f"evader_{i}", evader_sdf))
-
-    for idx, (model_name, model_sdf) in enumerate(all_models):
-        row = idx // 4
-        col = idx % 4
-        x = x0 + col * spacing
-        y = y0 + row * spacing
-        req = (
-            f'sdf_filename: "{model_sdf}" '
-            f'name: "{model_name}" '
-            f'pose: {{position: {{x: {x:.2f}, y: {y:.2f}, z: 0.70}}}}'
-        )
-        spawn_actions.append(
-            ExecuteProcess(
-                cmd=[
-                    "gz",
-                    "service",
-                    "-s",
-                    f"/world/{world_name}/create",
-                    "--reqtype",
-                    "gz.msgs.EntityFactory",
-                    "--reptype",
-                    "gz.msgs.Boolean",
-                    "--timeout",
-                    "3000",
-                    "--req",
-                    req,
-                ],
-                output="screen",
-            )
-        )
-
-    if not spawn_actions:
-        return []
-
-    return [TimerAction(period=1.0, actions=spawn_actions)]
-
-
 def generate_launch_description() -> LaunchDescription:
     env_backend = LaunchConfiguration("env_backend")
     gazebo_gui = LaunchConfiguration("gazebo_gui")
@@ -154,6 +97,9 @@ def generate_launch_description() -> LaunchDescription:
     obstacle_staging_x = LaunchConfiguration("obstacle_staging_x")
     obstacle_staging_y = LaunchConfiguration("obstacle_staging_y")
     obstacle_staging_stride = LaunchConfiguration("obstacle_staging_stride")
+    agent_staging_x = LaunchConfiguration("agent_staging_x")
+    agent_staging_y = LaunchConfiguration("agent_staging_y")
+    agent_staging_stride = LaunchConfiguration("agent_staging_stride")
     gazebo_controller_enabled = LaunchConfiguration("gazebo_controller_enabled")
     gazebo_controller_dt = LaunchConfiguration("gazebo_controller_dt")
     gazebo_max_speed = LaunchConfiguration("gazebo_max_speed")
@@ -225,14 +171,17 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("obstacle_staging_x", default_value="1000.0"),
             DeclareLaunchArgument("obstacle_staging_y", default_value="1000.0"),
             DeclareLaunchArgument("obstacle_staging_stride", default_value="1.5"),
+            DeclareLaunchArgument("agent_staging_x", default_value="1000.0"),
+            DeclareLaunchArgument("agent_staging_y", default_value="1200.0"),
+            DeclareLaunchArgument("agent_staging_stride", default_value="1.5"),
             DeclareLaunchArgument("gazebo_controller_enabled", default_value="true"),
-            DeclareLaunchArgument("gazebo_controller_dt", default_value="0.05"),
+            DeclareLaunchArgument("gazebo_controller_dt", default_value="0.02"),
             DeclareLaunchArgument("gazebo_max_speed", default_value="3.0"),
             DeclareLaunchArgument("gazebo_pursuer_max_speed", default_value="-1.0"),
             DeclareLaunchArgument("gazebo_evader_max_speed", default_value="-1.0"),
             DeclareLaunchArgument("gazebo_linear_drag", default_value="0.15"),
             DeclareLaunchArgument("gazebo_control_requires_reset", default_value="true"),
-            DeclareLaunchArgument("fixed_z", default_value="0.7"),
+            DeclareLaunchArgument("fixed_z", default_value="1.0"),
             DeclareLaunchArgument("initial_reset_delay_sec", default_value="5.0"),
             DeclareLaunchArgument("reset_agents_delay_sec", default_value="0.4"),
             DeclareLaunchArgument("reset_grace_steps", default_value="12"),
@@ -252,7 +201,6 @@ def generate_launch_description() -> LaunchDescription:
                 condition=gazebo_headless_condition,
             ),
             OpaqueFunction(function=_create_bridge_process, condition=gazebo_condition),
-            OpaqueFunction(function=_spawn_agents, condition=gazebo_condition),
             Node(
                 package="world_manager",
                 executable="world_manager_node",
@@ -305,6 +253,10 @@ def generate_launch_description() -> LaunchDescription:
                         "world_half_extent": ParameterValue(world_half_extent, value_type=float),
                         "spawn_z": ParameterValue(fixed_z, value_type=float),
                         "world_name": world_name,
+                        "agent_model_package": "swarm_bringup",
+                        "agent_staging_x": ParameterValue(agent_staging_x, value_type=float),
+                        "agent_staging_y": ParameterValue(agent_staging_y, value_type=float),
+                        "agent_staging_stride": ParameterValue(agent_staging_stride, value_type=float),
                     }
                 ],
             ),

@@ -68,6 +68,8 @@ class WorldManagerNode(Node):
 
         self._world_reset_count = 0
         self._reset_pending = False
+        self._pool_initialized = False
+        self._published_empty_once = False
         self._spawn_pending: Dict[str, bool] = {}
         self._spawned: Dict[str, bool] = {}
         self._last_obstacles: List[Tuple[ObstacleSpec, float, float]] = []
@@ -75,7 +77,6 @@ class WorldManagerNode(Node):
         self._box_sdf, self._rect_sdf, self._cylinder_sdf = self._resolve_model_paths()
         self._pool: List[ObstacleSpec] = self._init_obstacle_pool()
 
-        self.on_reset_world(Empty())
         self.create_timer(0.1, self._process_pending_reset)
 
     def _resolve_model_paths(self) -> Tuple[str, str, str]:
@@ -175,9 +176,15 @@ class WorldManagerNode(Node):
             self._spawn_pending[spec.name] = False
             try:
                 res = done_future.result()
+                status_text = ""
+                if res is not None:
+                    status_text = getattr(res, "status_message", "") or ""
                 if res is not None and res.success:
                     self._spawned[spec.name] = True
                     self.get_logger().info(f"Spawned obstacle model: {spec.name}")
+                elif "already exists" in status_text.lower():
+                    self._spawned[spec.name] = True
+                    self.get_logger().info(f"Obstacle model already exists, reuse it: {spec.name}")
                 else:
                     self.get_logger().warning(f"Spawn failed for obstacle model: {spec.name}")
             except Exception as exc:  # pragma: no cover
@@ -355,6 +362,22 @@ class WorldManagerNode(Node):
         return True
 
     def _process_pending_reset(self) -> None:
+        if not self._pool_initialized:
+            all_ready = True
+            for spec in self._pool:
+                if not self._request_spawn_if_needed(spec):
+                    all_ready = False
+
+            if not all_ready:
+                return
+
+            self._pool_initialized = True
+            self.get_logger().info("Obstacle pool initialized in staging area")
+
+        if not self._published_empty_once:
+            self._publish_obstacles([])
+            self._published_empty_once = True
+
         if not self._reset_pending:
             return
 
