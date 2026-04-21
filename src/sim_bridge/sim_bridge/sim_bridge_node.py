@@ -9,7 +9,7 @@ from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from ros_gz_interfaces.msg import Contacts, Entity
 from ros_gz_interfaces.srv import SetEntityPose
-from std_msgs.msg import Bool
+from std_msgs.msg import Bool, Int32
 
 
 class SimBridgeNode(Node):
@@ -68,6 +68,8 @@ class SimBridgeNode(Node):
         self.velocities: Dict[int, np.ndarray] = {}
         self.model_ready: Dict[int, bool] = {}
         self.has_received_reset = False
+        self.has_received_episode_start = False
+        self.latest_reset_id = 0
 
         set_pose_service = f"/world/{self.world_name}/set_pose"
         self.set_pose_client = self.create_client(SetEntityPose, set_pose_service)
@@ -115,6 +117,8 @@ class SimBridgeNode(Node):
             )
 
         self.create_subscription(PoseArray, "/agent_manager/reset_poses", self.on_reset_poses, 10)
+        self.create_subscription(Int32, "/agent_manager/reset_done", self.on_reset_done, 10)
+        self.create_subscription(Int32, "/scheduler/episode_start", self.on_episode_start, 10)
 
         if self.controller_enabled:
             self.create_timer(self.controller_dt, self.control_step)
@@ -137,7 +141,7 @@ class SimBridgeNode(Node):
         self.odom_pubs[agent_id].publish(msg)
 
     def on_model_contacts(self, agent_id: int, msg: Contacts) -> None:
-        if self.control_requires_reset and not self.has_received_reset:
+        if self.control_requires_reset and (not self.has_received_reset or not self.has_received_episode_start):
             out = Bool()
             out.data = False
             self.collision_pubs[agent_id].publish(out)
@@ -162,12 +166,29 @@ class SimBridgeNode(Node):
 
     def on_reset_poses(self, msg: PoseArray) -> None:
         self.has_received_reset = True
+        self.has_received_episode_start = False
         for idx, pose in enumerate(msg.poses):
             if idx not in self.positions:
                 continue
             self.positions[idx][0] = pose.position.x
             self.positions[idx][1] = pose.position.y
             self.velocities[idx][:] = 0.0
+            self.accels[idx][:] = 0.0
+
+    def on_reset_done(self, msg: Int32) -> None:
+        reset_id = int(msg.data)
+        if reset_id <= 0:
+            return
+        self.latest_reset_id = reset_id
+        self.has_received_episode_start = False
+
+    def on_episode_start(self, msg: Int32) -> None:
+        reset_id = int(msg.data)
+        if reset_id <= 0:
+            return
+        if self.latest_reset_id > 0 and reset_id != self.latest_reset_id:
+            return
+        self.has_received_episode_start = True
 
     def _set_model_pose(self, model_name: str, pos: np.ndarray, vel: np.ndarray) -> None:
         if not self.set_pose_client.wait_for_service(timeout_sec=0.01):
@@ -194,7 +215,7 @@ class SimBridgeNode(Node):
         return self.evader_max_speed if self.evader_max_speed > 0.0 else self.max_speed
 
     def control_step(self) -> None:
-        if self.control_requires_reset and not self.has_received_reset:
+        if self.control_requires_reset and (not self.has_received_reset or not self.has_received_episode_start):
             return
 
         if self.model_ready and not all(self.model_ready.values()):

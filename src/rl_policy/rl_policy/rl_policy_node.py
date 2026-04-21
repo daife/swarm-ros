@@ -11,7 +11,7 @@ import rclpy
 from geometry_msgs.msg import Accel
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
-from std_msgs.msg import Bool, Float32MultiArray, Int8
+from std_msgs.msg import Bool, Float32MultiArray, Int32
 
 try:
     import torch
@@ -139,8 +139,10 @@ class RLPolicyNode(Node):
             )
             self.cmd_publishers[agent_id] = self.create_publisher(Accel, f"/agent_{agent_id}/cmd_accel", 10)
 
-        self.create_subscription(Int8, "/scheduler/reset_agents", self.on_episode_done, 10)
+        self.create_subscription(Int32, "/agent_manager/reset_done", self.on_agent_reset_done, 10)
+        self.create_subscription(Int32, "/scheduler/episode_start", self.on_episode_start, 10)
         self.create_subscription(Float32MultiArray, "/rl/episode_metrics", self.on_episode_metrics, 10)
+        self.reset_ready_pub = self.create_publisher(Int32, "/rl_policy/reset_ready", 10)
 
         self.done_latched = False
         self.latest_done_reason = 0
@@ -157,6 +159,11 @@ class RLPolicyNode(Node):
         self.prev_snapshot: Optional[Dict[str, np.ndarray]] = None
         self.step_counter_for_policy_delay = 0
         self.local_episode_step_count = 0
+        self.pending_ready_reset_id: Optional[int] = None
+        self.last_ready_reset_id = 0
+        self.last_agent_reset_id = 0
+        self.last_episode_start_id = 0
+        self.waiting_for_episode_start = True
 
         self.device = self._select_torch_device()
         self._init_models()
@@ -398,10 +405,40 @@ class RLPolicyNode(Node):
         if msg.data:
             self.collision_flags[agent_id] = True
 
-    def on_episode_done(self, _msg: Int8) -> None:
-        # Do not treat reset command itself as episode boundary.
-        # Episode boundary is decided by /rl/episode_metrics (or horizon fallback).
-        return
+    def on_agent_reset_done(self, msg: Int32) -> None:
+        reset_id = int(msg.data)
+        if reset_id <= 0:
+            return
+
+        self.last_agent_reset_id = max(self.last_agent_reset_id, reset_id)
+        self.pending_ready_reset_id = reset_id
+        self.waiting_for_episode_start = True
+
+    def on_episode_start(self, msg: Int32) -> None:
+        reset_id = int(msg.data)
+        if reset_id <= 0:
+            return
+        if reset_id != self.last_agent_reset_id:
+            return
+
+        self.last_episode_start_id = reset_id
+        self.waiting_for_episode_start = False
+
+    def _publish_reset_ready_if_needed(self) -> None:
+        if self.pending_ready_reset_id is None:
+            return
+
+        reset_id = int(self.pending_ready_reset_id)
+        if reset_id <= self.last_ready_reset_id:
+            self.pending_ready_reset_id = None
+            return
+
+        msg = Int32()
+        msg.data = reset_id
+        self.reset_ready_pub.publish(msg)
+        self.last_ready_reset_id = reset_id
+        self.pending_ready_reset_id = None
+        self.get_logger().info(f"Published /rl_policy/reset_ready reset_id={reset_id}")
 
     def on_episode_metrics(self, msg: Float32MultiArray) -> None:
         if len(msg.data) >= 3:
@@ -784,6 +821,14 @@ class RLPolicyNode(Node):
         pursuer_obs = self._build_pursuer_obs()
         evader_obs = self._build_evader_obs()
         if global_state is None or pursuer_obs is None or evader_obs is None:
+            return
+
+        self._publish_reset_ready_if_needed()
+
+        if self.waiting_for_episode_start:
+            if self.done_latched:
+                self._finalize_episode()
+            self.prev_snapshot = None
             return
 
         pursuer_actions = self._policy_pursuer_actions(pursuer_obs)

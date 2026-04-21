@@ -123,8 +123,6 @@ def generate_launch_description() -> LaunchDescription:
     gazebo_control_requires_reset = LaunchConfiguration("gazebo_control_requires_reset")
     fixed_z = LaunchConfiguration("fixed_z")
     initial_reset_delay_sec = LaunchConfiguration("initial_reset_delay_sec")
-    reset_agents_delay_sec = LaunchConfiguration("reset_agents_delay_sec")
-    reset_grace_steps = LaunchConfiguration("reset_grace_steps")
     always_reset_world = LaunchConfiguration("always_reset_world")
     gazebo_gui_condition = IfCondition(PythonExpression(["'", gazebo_gui, "' == 'true'"]))
     gazebo_headless_condition = IfCondition(PythonExpression(["'", gazebo_gui, "' != 'true'"]))
@@ -204,8 +202,6 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("gazebo_control_requires_reset", default_value="true"),
             DeclareLaunchArgument("fixed_z", default_value="1.0"),
             DeclareLaunchArgument("initial_reset_delay_sec", default_value="5.0"),
-            DeclareLaunchArgument("reset_agents_delay_sec", default_value="0.4"),
-            DeclareLaunchArgument("reset_grace_steps", default_value="12"),
             DeclareLaunchArgument("always_reset_world", default_value="true"),
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(gz_launch_file),
@@ -373,11 +369,6 @@ def generate_launch_description() -> LaunchDescription:
                             initial_reset_delay_sec,
                             value_type=float,
                         ),
-                        "reset_agents_delay_sec": ParameterValue(
-                            reset_agents_delay_sec,
-                            value_type=float,
-                        ),
-                        "reset_grace_steps": ParameterValue(reset_grace_steps, value_type=int),
                         "always_reset_world": ParameterValue(always_reset_world, value_type=bool),
                     }
                 ],

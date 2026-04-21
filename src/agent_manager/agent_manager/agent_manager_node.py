@@ -8,7 +8,7 @@ import rclpy
 from ros_gz_interfaces.msg import Entity
 from ros_gz_interfaces.srv import SetEntityPose, SpawnEntity
 from rclpy.node import Node
-from std_msgs.msg import Int8
+from std_msgs.msg import Int32, Int32MultiArray
 from visualization_msgs.msg import Marker, MarkerArray
 
 
@@ -34,14 +34,16 @@ class AgentManagerNode(Node):
 		self.obstacles: List[Tuple[float, float, float, float, bool]] = []
 		self.initial_poses: List[Pose] = []
 		self.last_reset_poses: List[Pose] = []
+		self.pending_reset_id: Optional[int] = None
 		self.pending_reset_mode: Optional[int] = None
 		self.spawned: Dict[str, bool] = {}
 		self.spawn_pending: Dict[str, bool] = {}
 		self.spawn_pending_since: Dict[str, float] = {}
 
 		self.create_subscription(MarkerArray, "/world_manager/obstacles", self.on_obstacles, 10)
-		self.create_subscription(Int8, "/scheduler/reset_agents", self.on_reset_agents, 10)
+		self.create_subscription(Int32MultiArray, "/scheduler/reset_agents_cmd", self.on_reset_agents_cmd, 10)
 		self.reset_pose_debug_pub = self.create_publisher(PoseArray, "/agent_manager/reset_poses", 10)
+		self.reset_done_pub = self.create_publisher(Int32, "/agent_manager/reset_done", 10)
 
 		self.world_name = self.get_parameter("world_name").get_parameter_value().string_value
 		service_name = f"/world/{self.world_name}/set_pose"
@@ -344,7 +346,9 @@ class AgentManagerNode(Node):
 		if not self.initial_poses:
 			self.initial_poses = self._sample_pose_set()
 
+		reset_id = self.pending_reset_id
 		mode = self.pending_reset_mode
+		self.pending_reset_id = None
 		self.pending_reset_mode = None
 
 		if mode == 1:
@@ -355,10 +359,23 @@ class AgentManagerNode(Node):
 			new_poses = self._sample_pose_set()
 			self._apply_pose_set(new_poses)
 		else:
-			self.get_logger().warning(f"Unsupported reset mode: {mode}")
+			self.get_logger().warning(f"Unsupported reset mode: {mode}, fallback to mode=2")
+			new_poses = self._sample_pose_set()
+			self._apply_pose_set(new_poses)
 
-	def on_reset_agents(self, msg: Int8) -> None:
-		self.pending_reset_mode = msg.data
+		if reset_id is not None:
+			done_msg = Int32()
+			done_msg.data = int(reset_id)
+			self.reset_done_pub.publish(done_msg)
+			self.get_logger().info(f"Published /agent_manager/reset_done reset_id={reset_id}")
+
+	def on_reset_agents_cmd(self, msg: Int32MultiArray) -> None:
+		if len(msg.data) < 2:
+			self.get_logger().warning("Invalid /scheduler/reset_agents_cmd payload, expected [reset_id, mode]")
+			return
+
+		self.pending_reset_id = int(msg.data[0])
+		self.pending_reset_mode = int(msg.data[1])
 
 
 def main(args=None) -> None:

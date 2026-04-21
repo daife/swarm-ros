@@ -94,8 +94,6 @@ export MAX_STEPS="${MAX_STEPS:-120}"                      # 可选: 每回合最
 export RESET_POLICY="${RESET_POLICY:-2}"                  # 可选: 1固定重置/2安全随机/3重置世界再随机
 export CAPTURE_STEPS="${CAPTURE_STEPS:-5}"                # 可选: 连续捕获步数阈值
 export INITIAL_RESET_DELAY_SEC="${INITIAL_RESET_DELAY_SEC:-5.0}" # 可选: 启动后首次 reset 延迟
-export RESET_AGENTS_DELAY_SEC="${RESET_AGENTS_DELAY_SEC:-0.4}"   # 可选: world reset 后到 agent reset 的延迟
-export RESET_GRACE_STEPS="${RESET_GRACE_STEPS:-12}"       # 可选: reset 后碰撞忽略步数
 export ALWAYS_RESET_WORLD="${ALWAYS_RESET_WORLD:-true}"    # 可选: 每轮 done 后都重置障碍
 
 

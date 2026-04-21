@@ -117,20 +117,20 @@ cd ~/swarm-ros
 手动刷新世界（触发 world_manager 重采样/重发布障碍）：
 
 ```bash
-ros2 topic pub --once /scheduler/reset_world std_msgs/msg/Empty "{}"
+ros2 topic pub --once /scheduler/reset_world std_msgs/msg/Int32 "{data: 1}"
 ```
 
-手动重置 agent 位置（触发 agent_manager 重置）：
+手动重置 agent 位置（触发 agent_manager 重置，data=[reset_id, mode]）：
 
 ```bash
 # mode=1: 重置到初始位置
-ros2 topic pub --once /scheduler/reset_agents std_msgs/msg/Int8 "{data: 1}"
+ros2 topic pub --once /scheduler/reset_agents_cmd std_msgs/msg/Int32MultiArray "{data: [1, 1]}"
 
 # mode=2: 安全随机重置（推荐）
-ros2 topic pub --once /scheduler/reset_agents std_msgs/msg/Int8 "{data: 2}"
+ros2 topic pub --once /scheduler/reset_agents_cmd std_msgs/msg/Int32MultiArray "{data: [2, 2]}"
 ```
 
-说明：当前 mode=2 使用 collision_distance 约束采样，同时约束边界、障碍和追逃初始距离。
+说明：训练时由 training_coordinator 自动执行 reset_id 三方握手（world_done、agent_done、policy_ready）并发布 /scheduler/episode_start。
 
 快速查看命令是否生效：
 

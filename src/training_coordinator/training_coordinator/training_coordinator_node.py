@@ -1,11 +1,11 @@
 import math
 from functools import partial
-from typing import Dict, Optional
+from typing import Dict
 
 from nav_msgs.msg import Odometry
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import Bool, Empty, Float32MultiArray, Int8
+from std_msgs.msg import Bool, Float32MultiArray, Int32, Int32MultiArray
 
 
 class TrainingCoordinatorNode(Node):
@@ -20,15 +20,14 @@ class TrainingCoordinatorNode(Node):
         self.declare_parameter("capture_radius", 2.0)
         self.declare_parameter("capture_steps", 5)
         self.declare_parameter("initial_reset_delay_sec", 5.0)
-        self.declare_parameter("reset_agents_delay_sec", 0.4)
-        self.declare_parameter("reset_grace_steps", 12)
         self.declare_parameter("always_reset_world", True)
 
         self.num_pursuers = self.get_parameter("num_pursuers").get_parameter_value().integer_value
         self.num_evaders = self.get_parameter("num_evaders").get_parameter_value().integer_value
 
-        self.reset_world_pub = self.create_publisher(Empty, "/scheduler/reset_world", 10)
-        self.reset_agents_pub = self.create_publisher(Int8, "/scheduler/reset_agents", 10)
+        self.reset_world_pub = self.create_publisher(Int32, "/scheduler/reset_world", 10)
+        self.reset_agents_cmd_pub = self.create_publisher(Int32MultiArray, "/scheduler/reset_agents_cmd", 10)
+        self.episode_start_pub = self.create_publisher(Int32, "/scheduler/episode_start", 10)
         self.metrics_pub = self.create_publisher(Float32MultiArray, "/rl/episode_metrics", 10)
 
         self.current_episode = 0
@@ -37,11 +36,13 @@ class TrainingCoordinatorNode(Node):
         self.collision_events = 0
         self.collision_penalty_total = 0.0
         self.odom_states: Dict[int, Odometry] = {}
-        self.startup_reset_done = False
-        self.reset_grace_remaining = 0
-        self.pending_agent_reset_mode: Optional[int] = None
-        self.pending_agent_reset_reason = ""
-        self.pending_agent_reset_time = 0.0
+        self.startup_reset_issued = False
+
+        self.active_reset_id = 0
+        self.awaiting_reset = False
+        self.world_ready = False
+        self.agents_ready = False
+        self.policy_ready = False
 
         delay_sec = self.get_parameter("initial_reset_delay_sec").get_parameter_value().double_value
         now_sec = self.get_clock().now().nanoseconds * 1e-9
@@ -52,68 +53,87 @@ class TrainingCoordinatorNode(Node):
             self.create_subscription(Odometry, f"/agent_{agent_id}/odom", partial(self.on_odom, agent_id), 10)
             self.create_subscription(Bool, f"/agent_{agent_id}/collision", partial(self.on_collision, agent_id), 10)
 
+        self.create_subscription(Int32, "/world_manager/reset_done", self.on_world_reset_done, 10)
+        self.create_subscription(Int32, "/agent_manager/reset_done", self.on_agent_reset_done, 10)
+        self.create_subscription(Int32, "/rl_policy/reset_ready", self.on_policy_reset_ready, 10)
+
         self.create_timer(0.05, self.tick)
 
     def on_odom(self, agent_id: int, msg: Odometry) -> None:
         self.odom_states[agent_id] = msg
 
     def on_collision(self, _agent_id: int, msg: Bool) -> None:
-        if not self.startup_reset_done:
+        if not self.startup_reset_issued:
             return
-        if self.reset_grace_remaining > 0:
+        if self.awaiting_reset:
             return
         if msg.data:
             self.collision_events += 1
             penalty = self.get_parameter("collision_penalty").get_parameter_value().double_value
             self.collision_penalty_total += penalty
 
+    def _is_current_reset(self, reset_id: int) -> bool:
+        return self.awaiting_reset and reset_id == self.active_reset_id
+
+    def on_world_reset_done(self, msg: Int32) -> None:
+        reset_id = int(msg.data)
+        if not self._is_current_reset(reset_id):
+            return
+        if not self.world_ready:
+            self.world_ready = True
+            self.get_logger().info(f"World ready for reset_id={reset_id}")
+
+    def on_agent_reset_done(self, msg: Int32) -> None:
+        reset_id = int(msg.data)
+        if not self._is_current_reset(reset_id):
+            return
+        if not self.agents_ready:
+            self.agents_ready = True
+            self.get_logger().info(f"Agents ready for reset_id={reset_id}")
+
+    def on_policy_reset_ready(self, msg: Int32) -> None:
+        reset_id = int(msg.data)
+        if not self._is_current_reset(reset_id):
+            return
+        if not self.policy_ready:
+            self.policy_ready = True
+            self.get_logger().info(f"Policy ready for reset_id={reset_id}")
+
     def _agent_reset_mode(self, reset_policy: int) -> int:
         return 1 if reset_policy == 1 else 2
 
-    def _publish_agent_reset(self, mode: int, reason: str) -> None:
-        msg = Int8()
-        msg.data = mode
-        self.reset_agents_pub.publish(msg)
-        self.get_logger().info(f"Published /scheduler/reset_agents with mode={mode} ({reason})")
+    def _publish_episode_start(self, reset_id: int) -> None:
+        msg = Int32()
+        msg.data = reset_id
+        self.episode_start_pub.publish(msg)
+        self.get_logger().info(f"Published /scheduler/episode_start reset_id={reset_id}")
 
-    def _schedule_agent_reset(self, mode: int, reason: str) -> None:
-        now_sec = self.get_clock().now().nanoseconds * 1e-9
-        delay = self.get_parameter("reset_agents_delay_sec").get_parameter_value().double_value
-        if delay <= 0.0:
-            self._publish_agent_reset(mode, reason)
-            return
-
-        self.pending_agent_reset_mode = mode
-        self.pending_agent_reset_reason = reason
-        self.pending_agent_reset_time = now_sec + delay
-
-    def _flush_pending_agent_reset(self) -> None:
-        if self.pending_agent_reset_mode is None:
-            return
-
-        now_sec = self.get_clock().now().nanoseconds * 1e-9
-        if now_sec < self.pending_agent_reset_time:
-            return
-
-        self._publish_agent_reset(self.pending_agent_reset_mode, self.pending_agent_reset_reason)
-        self.pending_agent_reset_mode = None
-        self.pending_agent_reset_reason = ""
-        self.pending_agent_reset_time = 0.0
+    def _reset_handshake_ready(self) -> bool:
+        return self.world_ready and self.agents_ready and self.policy_ready
 
     def _trigger_reset(self, reset_policy: int, reason: str, startup: bool = False) -> None:
         always_reset_world = self.get_parameter("always_reset_world").get_parameter_value().bool_value
         publish_world_reset = startup or always_reset_world or reset_policy == 3
 
+        self.active_reset_id += 1
+        reset_id = self.active_reset_id
+        self.awaiting_reset = True
+        self.world_ready = not publish_world_reset
+        self.agents_ready = False
+        self.policy_ready = False
+
         if publish_world_reset:
-            self.reset_world_pub.publish(Empty())
-            self.get_logger().info(f"Published /scheduler/reset_world ({reason})")
+            msg = Int32()
+            msg.data = reset_id
+            self.reset_world_pub.publish(msg)
+            self.get_logger().info(f"Published /scheduler/reset_world reset_id={reset_id} ({reason})")
 
         mode = self._agent_reset_mode(reset_policy)
-        self._schedule_agent_reset(mode, reason)
-
-        self.reset_grace_remaining = max(
-            0,
-            self.get_parameter("reset_grace_steps").get_parameter_value().integer_value,
+        agent_msg = Int32MultiArray()
+        agent_msg.data = [int(reset_id), int(mode)]
+        self.reset_agents_cmd_pub.publish(agent_msg)
+        self.get_logger().info(
+            f"Published /scheduler/reset_agents_cmd reset_id={reset_id}, mode={mode} ({reason})"
         )
 
     def _is_capture(self) -> bool:
@@ -161,19 +181,24 @@ class TrainingCoordinatorNode(Node):
         if self.current_episode >= max_episodes:
             return
 
-        self._flush_pending_agent_reset()
-
-        if not self.startup_reset_done:
+        if not self.startup_reset_issued:
             now_sec = self.get_clock().now().nanoseconds * 1e-9
             if now_sec < self.startup_reset_deadline:
                 return
             self._trigger_reset(reset_policy, reason="startup", startup=True)
-            self.startup_reset_done = True
-            self.get_logger().info("Startup reset done, waiting reset grace before Episode 1")
+            self.startup_reset_issued = True
+            self.get_logger().info("Startup reset requested, waiting strong handshake")
             return
 
-        if self.reset_grace_remaining > 0:
-            self.reset_grace_remaining -= 1
+        if self.awaiting_reset:
+            if not self._reset_handshake_ready():
+                return
+            done_reset_id = self.active_reset_id
+            self.awaiting_reset = False
+            self._publish_episode_start(done_reset_id)
+            self.get_logger().info(
+                f"Reset handshake complete for reset_id={done_reset_id}, episode {self.current_episode + 1} starts"
+            )
             return
 
         self.current_step += 1

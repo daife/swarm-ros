@@ -21,11 +21,11 @@
 系统遵循如下回合闭环，避免出生点卡墙并保证训练状态一致：
 
 1. training_coordinator 判定 done（追捕成功、碰撞、步数超限）。
-2. 每轮 reset 先发布 /scheduler/reset_world（只重置障碍位置，不重启 Gazebo）。
-3. world_manager 完成障碍物刷新并发布 /world_manager/obstacles。
-4. training_coordinator 延迟发布 /scheduler/reset_agents（模式 1 或 2）。
-5. agent_manager 基于障碍物/边界/捕获半径 + collision_distance 采样并调用 SetEntityPose。
-6. rl_policy 以 reset 消息作为回合边界，写入 replay 与 checkpoint。
+2. 每轮 reset 下发带 reset_id 的 /scheduler/reset_world 与 /scheduler/reset_agents_cmd。
+3. world_manager 完成障碍刷新后发布 /world_manager/reset_done(reset_id)。
+4. agent_manager 完成安全重置后发布 /agent_manager/reset_done(reset_id)。
+5. rl_policy 在观测齐备后发布 /rl_policy/reset_ready(reset_id)。
+6. training_coordinator 收齐三方同轮次 ready 后发布 /scheduler/episode_start(reset_id)，再开启下一回合。
 
 ## 2. 功能包与参数
 
@@ -88,8 +88,9 @@
 
 话题：
 
-- Sub: /scheduler/reset_world (std_msgs/Empty)
+- Sub: /scheduler/reset_world (std_msgs/Int32)
 - Pub: /world_manager/obstacles (visualization_msgs/MarkerArray, transient_local)
+- Pub: /world_manager/reset_done (std_msgs/Int32)
 
 ### 2.2 agent_manager
 
@@ -138,8 +139,9 @@
 话题与服务：
 
 - Sub: /world_manager/obstacles
-- Sub: /scheduler/reset_agents (std_msgs/Int8)
+- Sub: /scheduler/reset_agents_cmd (std_msgs/Int32MultiArray, [reset_id, mode])
 - Pub: /agent_manager/reset_poses (geometry_msgs/PoseArray)
+- Pub: /agent_manager/reset_done (std_msgs/Int32)
 - Client: /world/<world_name>/create (ros_gz_interfaces/srv/SpawnEntity)
 - Client: /world/<world_name>/set_pose (ros_gz_interfaces/srv/SetEntityPose)
 
@@ -310,8 +312,6 @@ checkpoint 产物：
 | capture_radius | float | 2.0 | 追捕半径 |
 | capture_steps | int | 5 | 连续满足追捕步数 |
 | initial_reset_delay_sec | float | 5.0 | 启动后首次 reset 延迟 |
-| reset_agents_delay_sec | float | 0.4 | world reset 到 agent reset 的延迟 |
-| reset_grace_steps | int | 12 | reset 后碰撞忽略步数 |
 | always_reset_world | bool | true | 每轮 done 后都刷新障碍 |
 
 说明：一键 launch 的默认 `max_episodes=60`、`max_steps=120`，会覆盖节点内部默认值。
@@ -327,10 +327,10 @@ checkpoint 产物：
   - `1`: 固定重置到初始点，训练最稳定。
   - `2`: 安全随机重置，泛化更好（推荐默认）。
   - `3`: 先重置世界再随机，难度最高、适合后期增强。
-4. `initial_reset_delay_sec` / `reset_agents_delay_sec`:
-  - 保证“先 spawn，再 reset，再训练”，减少初始化竞争条件。
-5. `reset_grace_steps`:
-  - reset 后短窗口内碰撞不计分，避免重置瞬态干扰训练指标。
+4. `initial_reset_delay_sec`:
+  - 只用于启动阶段，等待 Gazebo 与模型服务稳定。
+5. reset 同步机制:
+  - 每轮按 reset_id 做三方强握手（world_done + agent_done + policy_ready），不使用软延迟和 grace 步数。
 6. `capture_radius` 与 `capture_steps`:
   - 两者共同决定捕获成功门槛。
   - 半径更大、连续步数更小会更容易判定捕获。
@@ -433,8 +433,6 @@ world 已包含：
 | gazebo_linear_drag | 0.15 | Gazebo阻尼 |
 | fixed_z | 1.0 | 固定高度 |
 | initial_reset_delay_sec | 5.0 | 启动后首次 reset 延迟 |
-| reset_agents_delay_sec | 0.4 | world reset 到 agent reset 延迟 |
-| reset_grace_steps | 12 | reset 后碰撞忽略步数 |
 | torch_device | auto | RL 训练设备选择（auto/cpu/cuda/cuda:0） |
 Launch 参数细化说明：
 

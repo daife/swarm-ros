@@ -74,8 +74,6 @@ LAUNCH_ARGS=(
   "gazebo_control_requires_reset:=${GAZEBO_CONTROL_REQUIRES_RESET}"
   "fixed_z:=${FIXED_Z}"
   "initial_reset_delay_sec:=${INITIAL_RESET_DELAY_SEC}"
-  "reset_agents_delay_sec:=${RESET_AGENTS_DELAY_SEC}"
-  "reset_grace_steps:=${RESET_GRACE_STEPS}"
   "always_reset_world:=${ALWAYS_RESET_WORLD}"
 )
 

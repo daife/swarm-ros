@@ -9,7 +9,7 @@ from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from ros_gz_interfaces.msg import Entity
 from ros_gz_interfaces.srv import SetEntityPose, SpawnEntity
-from std_msgs.msg import Empty
+from std_msgs.msg import Int32
 from visualization_msgs.msg import Marker, MarkerArray
 
 
@@ -54,8 +54,9 @@ class WorldManagerNode(Node):
             "/world_manager/obstacles",
             obstacle_qos,
         )
+        self.reset_done_pub = self.create_publisher(Int32, "/world_manager/reset_done", 10)
         self.reset_sub = self.create_subscription(
-            Empty,
+            Int32,
             "/scheduler/reset_world",
             self.on_reset_world,
             10,
@@ -68,6 +69,7 @@ class WorldManagerNode(Node):
 
         self._world_reset_count = 0
         self._reset_pending = False
+        self._pending_reset_id = 0
         self._pool_initialized = False
         self._published_empty_once = False
         self._spawn_pending: Dict[str, bool] = {}
@@ -413,12 +415,17 @@ class WorldManagerNode(Node):
         self._last_obstacles = applied_layout
         self._publish_obstacles(applied_layout)
         self._reset_pending = False
+        done_msg = Int32()
+        done_msg.data = int(self._pending_reset_id)
+        self.reset_done_pub.publish(done_msg)
         self.get_logger().info(
-            f"World reset complete: obstacles repositioned ({len(applied_layout)}/{len(layout)})"
+            "World reset complete: "
+            f"reset_id={self._pending_reset_id}, obstacles repositioned ({len(applied_layout)}/{len(layout)})"
         )
 
-    def on_reset_world(self, _msg: Empty) -> None:
+    def on_reset_world(self, msg: Int32) -> None:
         self._world_reset_count += 1
+        self._pending_reset_id = max(1, int(msg.data))
         self._reset_pending = True
 
 
