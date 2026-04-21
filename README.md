@@ -452,4 +452,49 @@ Launch 参数细化说明：
   - `cpu`: 强制 CPU。
   - `cuda` / `cuda:0`: 强制指定 GPU（若不可用会自动回退 CPU 并告警）。
 
+## 5. 主闭环链路
+“无人机状态输入-策略处理-控制输出”的主闭环在两个节点：
 
+1. 策略节点：RLPolicyNode  
+位置：rl_policy_node.py
+2. 执行与仿真桥接节点：SimBridgeNode  
+位置：sim_bridge_node.py
+
+具体链路如下。
+
+输入（无人机信息）
+1. Gazebo 原始状态先进入 SimBridgeNode  
+来源定义：sim_bridge_node.py
+2. SimBridgeNode 转发为统一 ROS 话题：
+- /agent_i/odom，类型 nav_msgs/Odometry（位置、速度等）  
+发布位置：sim_bridge_node.py
+- /agent_i/collision，类型 std_msgs/Bool（是否碰撞）  
+发布位置：sim_bridge_node.py
+3. RLPolicyNode 订阅这些输入：
+- Odometry 订阅：rl_policy_node.py
+- Collision 订阅：rl_policy_node.py
+
+处理（策略内部）
+1. RLPolicyNode 把输入组织成 numpy 观测：
+- 全局状态：float32 向量，按每个体 [x,y,vx,vy] 拼接，维度 4×agent总数  
+函数：rl_policy_node.py
+- Pursuer 局部观测：shape = [num_pursuers, 6]，内容类似 [ex-px, ey-py, pvx, pvy, ex, ey]  
+函数：rl_policy_node.py
+- Evader 局部观测：shape = [num_evaders, 6]，内容类似 [ex-px, ey-py, evx, evy, px, py]  
+函数：rl_policy_node.py
+2. 在 control_tick 中执行策略推理/训练并生成动作  
+入口：rl_policy_node.py
+
+输出（控制量）
+1. RLPolicyNode 输出控制话题：
+- /agent_i/cmd_accel，类型 geometry_msgs/Accel  
+发布器创建：rl_policy_node.py
+- 实际写入字段是 linear.x、linear.y（linear.z 置 0）  
+发布函数：rl_policy_node.py
+2. SimBridgeNode 订阅 /agent_i/cmd_accel 后做积分与限幅，再调用 Gazebo set_pose 服务写回实体位姿  
+加速度接收：sim_bridge_node.py  
+控制积分：sim_bridge_node.py  
+写回 Gazebo：sim_bridge_node.py
+
+补充
+- TrainingCoordinatorNode 也会订阅 /agent_i/odom 和 /agent_i/collision，但它用途是 done 判定和发布训练指标，不直接输出控制量。参考：training_coordinator_node.py

@@ -1,4 +1,49 @@
-world_manager为什么和agent manager有差别，初次启动该ros节点时，都应该处于边界外（不检测碰撞，在gui中可见，但是对于里面的agent，在边界外的障碍物是不可见的），直到第一次调用reset才会重置位置到边界内
-撤销stage3_stepbook的运行中修正，而是将agent生成与world中的障碍物类似，在agent_manager中进行初始生成（这样的话，更能解决stage3提到的问题）
-删除所有的对旧的参数的兼容，修改.sh文件以及env_defaults.sh，swarm_bringup包的功能仅限于一键launch训练（替代手动运行若干.sh）以及用于存放模型文件
-目前z轴的处理，还存在问题，似乎是由于z轴与地面存在碰撞，亦或是由于控制频率不足，gui中出现agents z方向上下剧烈浮动，并且单轮训练终止条件输出为reason=2，可能的解决办法：1.在gazebo中设定z方向加速度为0  2.设定与地面不检测碰撞且z位置为0（因为似乎agents包含重力加速度，所以在控制频率低的时候会往下掉） 3.备选方案，使用pid控制维持一定高度，该高度为碰撞距离+2
+目前存在的节点协同问题：
+两种对齐信号会让 rl_policy 在“何时把一个回合封账”上产生明显不同。
+
+当前实现是按 /rl/episode_metrics 对齐
+参考 rl_policy_node.py:406、training_coordinator_node.py:142
+效果：
+done 由 training_coordinator 判定后立即发 metrics，rl_policy 立刻置 done_latched=true。
+该步 transition 会写入 done=1，然后立即 finalize 回合。
+参考 rl_policy_node.py:812、rl_policy_node.py:840
+可以拿到 done_reason（捕获/碰撞/超时）用于日志与统计。
+参考 rl_policy_node.py:408
+如果改成按 /scheduler/reset_agents 对齐，会出现的变化
+参考 rl_policy_node.py:401、training_coordinator_node.py:79
+效果：
+回合边界会被 reset_agents_delay_sec 人为后移（默认 0.4s），不是 done 当下。
+参考 training_coordinator_node.py:23
+done 到 reset_agents 之间会多产生若干步样本，边界语义从“任务终止”变成“重置命令到达”。
+reset_agents 只带 mode，不带 done_reason；策略侧少了终止原因信息（除非继续保留 metrics）。
+你的代码里其实已明确写了“不要把 reset 命令当回合边界”。
+参考 rl_policy_node.py:402
+关于第二问：现在没有一个“障碍物、agents、rl_policy 全部就绪后才开始下一回合”的强握手闭环，只有时间与局部门控。
+
+有哪些“局部保证”
+training_coordinator 先发 reset_world，再延迟发 reset_agents。
+参考 training_coordinator_node.py:103
+world_manager 在 reset 完成后会发布 obstacles（transient_local），agent_manager 能缓存。
+参考 world_manager_node.py:345、agent_manager_node.py:94
+agent_manager 完成重置后会发 /agent_manager/reset_poses。
+参考 agent_manager_node.py:334
+sim_bridge 用 /agent_manager/reset_poses 打开控制门（has_received_reset）。
+参考 sim_bridge_node.py:163、sim_bridge_node.py:197
+training_coordinator 还有 reset_grace_steps，避免重置瞬态立刻算碰撞。
+参考 training_coordinator_node.py:24
+缺的“全链路保证”
+training_coordinator 不等待 world_manager 的“reset 完成 ack”再发 reset_agents，只是固定延迟。
+training_coordinator 不订阅 /agent_manager/reset_poses，所以不知道 agent 是否真的重置完成。
+rl_policy 不等待 reset_poses 就开始 control_tick；若观测缺失且 use_synthetic_obs_when_missing=true，会用合成观测继续跑。
+参考 rl_policy_node.py:108、rl_policy_node.py:428、rl_policy_node.py:164
+结论：
+
+现在是“软同步”方案（延迟+grace+局部门控），不是“强同步握手”方案。
+如果你要严格保证“下一回合开始时三方都 ready”，需要新增 ack 链路（至少 world_reset_done、agents_reset_done、policy_ready_for_episode 三类信号），并让 training_coordinator 基于 ack 触发回合开始。
+本次已明确说明两种边界信号对训练样本与回合封账语义的影响，并核对了当前代码里的就绪保障能力与缺口。
+
+
+
+抓捕者控制策略输入输出解耦，随时切换（flocking追踪与maddpg）
+逃跑者也可切换（直接避障与ddpg）
+搜索ddpg和maddpg更合理的输入
