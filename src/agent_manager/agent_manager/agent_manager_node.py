@@ -36,11 +36,15 @@ class AgentManagerNode(Node):
 		self.last_reset_poses: List[Pose] = []
 		self.pending_reset_id: Optional[int] = None
 		self.pending_reset_mode: Optional[int] = None
+		self.last_world_reset_requested_id = 0
+		self.last_world_reset_done_id = 0
 		self.spawned: Dict[str, bool] = {}
 		self.spawn_pending: Dict[str, bool] = {}
 		self.spawn_pending_since: Dict[str, float] = {}
 
 		self.create_subscription(MarkerArray, "/world_manager/obstacles", self.on_obstacles, 10)
+		self.create_subscription(Int32, "/scheduler/reset_world", self.on_world_reset_requested, 10)
+		self.create_subscription(Int32, "/world_manager/reset_done", self.on_world_reset_done, 10)
 		self.create_subscription(Int32MultiArray, "/scheduler/reset_agents_cmd", self.on_reset_agents_cmd, 10)
 		self.reset_pose_debug_pub = self.create_publisher(PoseArray, "/agent_manager/reset_poses", 10)
 		self.reset_done_pub = self.create_publisher(Int32, "/agent_manager/reset_done", 10)
@@ -110,6 +114,18 @@ class AgentManagerNode(Node):
 				)
 			)
 		self.get_logger().info(f"Cached {len(self.obstacles)} obstacles for collision-distance spawn checks")
+
+	def on_world_reset_requested(self, msg: Int32) -> None:
+		reset_id = int(msg.data)
+		if reset_id <= 0:
+			return
+		self.last_world_reset_requested_id = max(self.last_world_reset_requested_id, reset_id)
+
+	def on_world_reset_done(self, msg: Int32) -> None:
+		reset_id = int(msg.data)
+		if reset_id <= 0:
+			return
+		self.last_world_reset_done_id = max(self.last_world_reset_done_id, reset_id)
 
 	def _staging_pose(self, idx: int) -> Pose:
 		staging_x = self.get_parameter("agent_staging_x").get_parameter_value().double_value
@@ -342,6 +358,12 @@ class AgentManagerNode(Node):
 
 		if self.pending_reset_mode is None:
 			return
+
+		if self.pending_reset_id is not None:
+			reset_id = int(self.pending_reset_id)
+			world_reset_requested = reset_id <= self.last_world_reset_requested_id
+			if world_reset_requested and reset_id > self.last_world_reset_done_id:
+				return
 
 		if not self.initial_poses:
 			self.initial_poses = self._sample_pose_set()

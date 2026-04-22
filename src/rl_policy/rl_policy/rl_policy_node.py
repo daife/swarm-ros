@@ -140,6 +140,7 @@ class RLPolicyNode(Node):
             self.cmd_publishers[agent_id] = self.create_publisher(Accel, f"/agent_{agent_id}/cmd_accel", 10)
 
         self.create_subscription(Int32, "/agent_manager/reset_done", self.on_agent_reset_done, 10)
+        self.create_subscription(Int32, "/scheduler/reset_begin", self.on_reset_begin, 10)
         self.create_subscription(Int32, "/scheduler/episode_start", self.on_episode_start, 10)
         self.create_subscription(Float32MultiArray, "/rl/episode_metrics", self.on_episode_metrics, 10)
         self.reset_ready_pub = self.create_publisher(Int32, "/rl_policy/reset_ready", 10)
@@ -405,6 +406,25 @@ class RLPolicyNode(Node):
         if msg.data:
             self.collision_flags[agent_id] = True
 
+    def _publish_zero_actions(self) -> None:
+        cmd = Accel()
+        cmd.linear.x = 0.0
+        cmd.linear.y = 0.0
+        cmd.linear.z = 0.0
+        for pub in self.cmd_publishers.values():
+            pub.publish(cmd)
+
+    def _pause_for_reset(self) -> None:
+        self.waiting_for_episode_start = True
+        self.prev_snapshot = None
+        self._publish_zero_actions()
+
+    def on_reset_begin(self, msg: Int32) -> None:
+        reset_id = int(msg.data)
+        if reset_id <= 0:
+            return
+        self._pause_for_reset()
+
     def on_agent_reset_done(self, msg: Int32) -> None:
         reset_id = int(msg.data)
         if reset_id <= 0:
@@ -412,7 +432,7 @@ class RLPolicyNode(Node):
 
         self.last_agent_reset_id = max(self.last_agent_reset_id, reset_id)
         self.pending_ready_reset_id = reset_id
-        self.waiting_for_episode_start = True
+        self._pause_for_reset()
 
     def on_episode_start(self, msg: Int32) -> None:
         reset_id = int(msg.data)
@@ -423,6 +443,7 @@ class RLPolicyNode(Node):
 
         self.last_episode_start_id = reset_id
         self.waiting_for_episode_start = False
+        self.prev_snapshot = None
 
     def _publish_reset_ready_if_needed(self) -> None:
         if self.pending_ready_reset_id is None:
@@ -444,6 +465,7 @@ class RLPolicyNode(Node):
         if len(msg.data) >= 3:
             self.latest_done_reason = int(msg.data[2])
             self.done_latched = True
+            self._pause_for_reset()
 
     def _synthetic_kinematics(self, agent_id: int) -> Tuple[float, float, float, float]:
         phase = 0.05 * float(self.total_env_steps + 1 + agent_id)
@@ -814,6 +836,15 @@ class RLPolicyNode(Node):
         self.local_episode_step_count = 0
 
     def control_tick(self) -> None:
+        self._publish_reset_ready_if_needed()
+
+        if self.waiting_for_episode_start:
+            self._publish_zero_actions()
+            if self.done_latched:
+                self._finalize_episode()
+            self.prev_snapshot = None
+            return
+
         if self.num_evaders <= 0:
             return
 
@@ -821,14 +852,6 @@ class RLPolicyNode(Node):
         pursuer_obs = self._build_pursuer_obs()
         evader_obs = self._build_evader_obs()
         if global_state is None or pursuer_obs is None or evader_obs is None:
-            return
-
-        self._publish_reset_ready_if_needed()
-
-        if self.waiting_for_episode_start:
-            if self.done_latched:
-                self._finalize_episode()
-            self.prev_snapshot = None
             return
 
         pursuer_actions = self._policy_pursuer_actions(pursuer_obs)

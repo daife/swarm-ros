@@ -117,6 +117,7 @@ class SimBridgeNode(Node):
             )
 
         self.create_subscription(PoseArray, "/agent_manager/reset_poses", self.on_reset_poses, 10)
+        self.create_subscription(Int32, "/scheduler/reset_begin", self.on_reset_begin, 10)
         self.create_subscription(Int32, "/agent_manager/reset_done", self.on_reset_done, 10)
         self.create_subscription(Int32, "/scheduler/episode_start", self.on_episode_start, 10)
 
@@ -161,8 +162,21 @@ class SimBridgeNode(Node):
         return True
 
     def on_cmd_accel(self, agent_id: int, msg: Accel) -> None:
+        if self.control_requires_reset and (not self.has_received_reset or not self.has_received_episode_start):
+            self.accels[agent_id][:] = 0.0
+            return
         self.accels[agent_id][0] = msg.linear.x
         self.accels[agent_id][1] = msg.linear.y
+
+    def on_reset_begin(self, msg: Int32) -> None:
+        reset_id = int(msg.data)
+        if reset_id <= 0:
+            return
+        self.latest_reset_id = reset_id
+        self.has_received_reset = False
+        self.has_received_episode_start = False
+        for agent_id in self.accels:
+            self.accels[agent_id][:] = 0.0
 
     def on_reset_poses(self, msg: PoseArray) -> None:
         self.has_received_reset = True
@@ -180,6 +194,7 @@ class SimBridgeNode(Node):
         if reset_id <= 0:
             return
         self.latest_reset_id = reset_id
+        self.has_received_reset = True
         self.has_received_episode_start = False
 
     def on_episode_start(self, msg: Int32) -> None:

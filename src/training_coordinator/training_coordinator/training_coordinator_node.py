@@ -26,6 +26,7 @@ class TrainingCoordinatorNode(Node):
         self.num_evaders = self.get_parameter("num_evaders").get_parameter_value().integer_value
 
         self.reset_world_pub = self.create_publisher(Int32, "/scheduler/reset_world", 10)
+        self.reset_begin_pub = self.create_publisher(Int32, "/scheduler/reset_begin", 10)
         self.reset_agents_cmd_pub = self.create_publisher(Int32MultiArray, "/scheduler/reset_agents_cmd", 10)
         self.episode_start_pub = self.create_publisher(Int32, "/scheduler/episode_start", 10)
         self.metrics_pub = self.create_publisher(Float32MultiArray, "/rl/episode_metrics", 10)
@@ -43,6 +44,8 @@ class TrainingCoordinatorNode(Node):
         self.world_ready = False
         self.agents_ready = False
         self.policy_ready = False
+        self.agent_reset_sent = False
+        self.pending_agent_reset_mode = 0
 
         delay_sec = self.get_parameter("initial_reset_delay_sec").get_parameter_value().double_value
         now_sec = self.get_clock().now().nanoseconds * 1e-9
@@ -82,6 +85,7 @@ class TrainingCoordinatorNode(Node):
         if not self.world_ready:
             self.world_ready = True
             self.get_logger().info(f"World ready for reset_id={reset_id}")
+        self._publish_agent_reset_if_ready(reset_id, "world_ready")
 
     def on_agent_reset_done(self, msg: Int32) -> None:
         reset_id = int(msg.data)
@@ -102,6 +106,29 @@ class TrainingCoordinatorNode(Node):
     def _agent_reset_mode(self, reset_policy: int) -> int:
         return 1 if reset_policy == 1 else 2
 
+    def _publish_reset_begin(self, reset_id: int, reason: str) -> None:
+        msg = Int32()
+        msg.data = reset_id
+        self.reset_begin_pub.publish(msg)
+        self.get_logger().info(f"Published /scheduler/reset_begin reset_id={reset_id} ({reason})")
+
+    def _publish_agent_reset_if_ready(self, reset_id: int, reason: str) -> None:
+        if not self._is_current_reset(reset_id):
+            return
+        if self.agent_reset_sent:
+            return
+        if not self.world_ready:
+            return
+
+        agent_msg = Int32MultiArray()
+        agent_msg.data = [int(reset_id), int(self.pending_agent_reset_mode)]
+        self.reset_agents_cmd_pub.publish(agent_msg)
+        self.agent_reset_sent = True
+        self.get_logger().info(
+            "Published /scheduler/reset_agents_cmd "
+            f"reset_id={reset_id}, mode={self.pending_agent_reset_mode} ({reason})"
+        )
+
     def _publish_episode_start(self, reset_id: int) -> None:
         msg = Int32()
         msg.data = reset_id
@@ -109,7 +136,7 @@ class TrainingCoordinatorNode(Node):
         self.get_logger().info(f"Published /scheduler/episode_start reset_id={reset_id}")
 
     def _reset_handshake_ready(self) -> bool:
-        return self.world_ready and self.agents_ready and self.policy_ready
+        return self.world_ready and self.agent_reset_sent and self.agents_ready and self.policy_ready
 
     def _trigger_reset(self, reset_policy: int, reason: str, startup: bool = False) -> None:
         always_reset_world = self.get_parameter("always_reset_world").get_parameter_value().bool_value
@@ -118,9 +145,13 @@ class TrainingCoordinatorNode(Node):
         self.active_reset_id += 1
         reset_id = self.active_reset_id
         self.awaiting_reset = True
+        self.agent_reset_sent = False
+        self.pending_agent_reset_mode = self._agent_reset_mode(reset_policy)
         self.world_ready = not publish_world_reset
         self.agents_ready = False
         self.policy_ready = False
+
+        self._publish_reset_begin(reset_id, reason)
 
         if publish_world_reset:
             msg = Int32()
@@ -128,13 +159,7 @@ class TrainingCoordinatorNode(Node):
             self.reset_world_pub.publish(msg)
             self.get_logger().info(f"Published /scheduler/reset_world reset_id={reset_id} ({reason})")
 
-        mode = self._agent_reset_mode(reset_policy)
-        agent_msg = Int32MultiArray()
-        agent_msg.data = [int(reset_id), int(mode)]
-        self.reset_agents_cmd_pub.publish(agent_msg)
-        self.get_logger().info(
-            f"Published /scheduler/reset_agents_cmd reset_id={reset_id}, mode={mode} ({reason})"
-        )
+        self._publish_agent_reset_if_ready(reset_id, reason)
 
     def _is_capture(self) -> bool:
         capture_radius = self.get_parameter("capture_radius").get_parameter_value().double_value
