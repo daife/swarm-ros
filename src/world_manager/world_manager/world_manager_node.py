@@ -54,6 +54,7 @@ class WorldManagerNode(Node):
             "/world_manager/obstacles",
             obstacle_qos,
         )
+        self.obstacles_reset_id_pub = self.create_publisher(Int32, "/world_manager/obstacles_reset_id", 10)
         self.reset_done_pub = self.create_publisher(Int32, "/world_manager/reset_done", 10)
         self.reset_sub = self.create_subscription(
             Int32,
@@ -346,6 +347,11 @@ class WorldManagerNode(Node):
         self.obstacles_pub.publish(arr)
         self.get_logger().info(f"Published {len(arr.markers)} active obstacles")
 
+    def _publish_obstacles_reset_id(self, reset_id: int) -> None:
+        msg = Int32()
+        msg.data = int(reset_id)
+        self.obstacles_reset_id_pub.publish(msg)
+
     def _apply_layout(
         self,
         obstacles: List[Tuple[ObstacleSpec, float, float]],
@@ -414,6 +420,7 @@ class WorldManagerNode(Node):
 
         self._last_obstacles = applied_layout
         self._publish_obstacles(applied_layout)
+        self._publish_obstacles_reset_id(self._pending_reset_id)
         self._reset_pending = False
         done_msg = Int32()
         done_msg.data = int(self._pending_reset_id)

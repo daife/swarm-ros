@@ -38,11 +38,13 @@ class AgentManagerNode(Node):
 		self.pending_reset_mode: Optional[int] = None
 		self.last_world_reset_requested_id = 0
 		self.last_world_reset_done_id = 0
+		self.last_obstacles_reset_id = 0
 		self.spawned: Dict[str, bool] = {}
 		self.spawn_pending: Dict[str, bool] = {}
 		self.spawn_pending_since: Dict[str, float] = {}
 
 		self.create_subscription(MarkerArray, "/world_manager/obstacles", self.on_obstacles, 10)
+		self.create_subscription(Int32, "/world_manager/obstacles_reset_id", self.on_obstacles_reset_id, 10)
 		self.create_subscription(Int32, "/scheduler/reset_world", self.on_world_reset_requested, 10)
 		self.create_subscription(Int32, "/world_manager/reset_done", self.on_world_reset_done, 10)
 		self.create_subscription(Int32MultiArray, "/scheduler/reset_agents_cmd", self.on_reset_agents_cmd, 10)
@@ -126,6 +128,12 @@ class AgentManagerNode(Node):
 		if reset_id <= 0:
 			return
 		self.last_world_reset_done_id = max(self.last_world_reset_done_id, reset_id)
+
+	def on_obstacles_reset_id(self, msg: Int32) -> None:
+		reset_id = int(msg.data)
+		if reset_id <= 0:
+			return
+		self.last_obstacles_reset_id = max(self.last_obstacles_reset_id, reset_id)
 
 	def _staging_pose(self, idx: int) -> Pose:
 		staging_x = self.get_parameter("agent_staging_x").get_parameter_value().double_value
@@ -252,6 +260,15 @@ class AgentManagerNode(Node):
 
 		sample_half_extent = min(spawn_half_extent, max(0.1, world_half_extent - collision_distance))
 
+		def _build_pose(x: float, y: float, yaw: float) -> Pose:
+			pose = Pose()
+			pose.position.x = x
+			pose.position.y = y
+			pose.position.z = self.spawn_z
+			pose.orientation.z = math.sin(yaw / 2.0)
+			pose.orientation.w = math.cos(yaw / 2.0)
+			return pose
+
 		for _ in range(max(1, attempts)):
 			x = random.uniform(-sample_half_extent, sample_half_extent)
 			y = random.uniform(-sample_half_extent, sample_half_extent)
@@ -263,42 +280,51 @@ class AgentManagerNode(Node):
 				continue
 			if not self._pairwise_clearance_ok(agent_id, x, y, placed, collision_distance):
 				continue
+			return _build_pose(x, y, yaw)
 
-			pose = Pose()
-			pose.position.x = x
-			pose.position.y = y
-			pose.position.z = self.spawn_z
-			pose.orientation.z = math.sin(yaw / 2.0)
-			pose.orientation.w = math.cos(yaw / 2.0)
-			return pose
+		candidate_points: List[Tuple[float, float]] = []
+		anchor = max(0.0, sample_half_extent - 0.2)
+		candidate_points.extend(
+			[
+				(-anchor, -anchor),
+				(-anchor, anchor),
+				(anchor, -anchor),
+				(anchor, anchor),
+				(0.0, -anchor),
+				(0.0, anchor),
+				(-anchor, 0.0),
+				(anchor, 0.0),
+				(0.0, 0.0),
+			]
+		)
+
+		grid_n = 9
+		if grid_n > 1:
+			step = (2.0 * sample_half_extent) / float(grid_n - 1)
+			for gx in range(grid_n):
+				for gy in range(grid_n):
+					x = -sample_half_extent + gx * step
+					y = -sample_half_extent + gy * step
+					candidate_points.append((x, y))
+
+		seen = set()
+		for x, y in candidate_points:
+			key = (round(x, 3), round(y, 3))
+			if key in seen:
+				continue
+			seen.add(key)
+
+			if not self._boundary_ok(x, y, collision_distance):
+				continue
+			if not self._obstacle_clearance_ok(x, y, collision_distance):
+				continue
+			if not self._pairwise_clearance_ok(agent_id, x, y, placed, collision_distance):
+				continue
+			return _build_pose(x, y, 0.0)
 
 		return None
 
-	def _fallback_pose(self, idx: int) -> Pose:
-		# Fallback: deterministic spread near corners while respecting current world bounds.
-		world_half_extent = self.get_parameter("world_half_extent").get_parameter_value().double_value
-		collision_distance = self._collision_distance()
-		anchor = max(0.0, world_half_extent - collision_distance - 0.2)
-
-		anchors = [
-			(-anchor, -anchor),
-			(-anchor, anchor),
-			(anchor, -anchor),
-			(anchor, anchor),
-			(0.0, -anchor),
-			(0.0, anchor),
-			(-anchor, 0.0),
-			(anchor, 0.0),
-		]
-		x, y = anchors[idx % len(anchors)]
-		pose = Pose()
-		pose.position.x = x
-		pose.position.y = y
-		pose.position.z = self.spawn_z
-		pose.orientation.w = 1.0
-		return pose
-
-	def _sample_pose_set(self) -> List[Pose]:
+	def _sample_pose_set(self) -> Optional[List[Pose]]:
 		poses: List[Pose] = [Pose() for _ in range(self.total_agents)]
 		placed: Dict[int, Tuple[float, float]] = {}
 
@@ -309,14 +335,36 @@ class AgentManagerNode(Node):
 			pose = self._sample_safe_pose(agent_id, placed)
 			if pose is None:
 				self.get_logger().warning(
-					f"Failed to sample safe pose for agent_{agent_id}; using deterministic fallback"
+					f"Failed to sample safe pose for agent_{agent_id}; reset waits and retries"
 				)
-				pose = self._fallback_pose(agent_id)
+				return None
 
 			poses[agent_id] = pose
 			placed[agent_id] = (pose.position.x, pose.position.y)
 
 		return poses
+
+	def _pose_set_is_safe(self, poses: List[Pose]) -> bool:
+		if len(poses) < self.total_agents:
+			return False
+
+		collision_distance = self._collision_distance()
+		placed: Dict[int, Tuple[float, float]] = {}
+
+		for agent_id in range(self.total_agents):
+			pose = poses[agent_id]
+			x = float(pose.position.x)
+			y = float(pose.position.y)
+
+			if not self._boundary_ok(x, y, collision_distance):
+				return False
+			if not self._obstacle_clearance_ok(x, y, collision_distance):
+				return False
+			if not self._pairwise_clearance_ok(agent_id, x, y, placed, collision_distance):
+				return False
+			placed[agent_id] = (x, y)
+
+		return True
 
 	def _call_set_pose(self, model_name: str, pose: Pose) -> None:
 		if not self.set_pose_client.wait_for_service(timeout_sec=0.2):
@@ -364,26 +412,45 @@ class AgentManagerNode(Node):
 			world_reset_requested = reset_id <= self.last_world_reset_requested_id
 			if world_reset_requested and reset_id > self.last_world_reset_done_id:
 				return
-
-		if not self.initial_poses:
-			self.initial_poses = self._sample_pose_set()
+			if world_reset_requested and reset_id > self.last_obstacles_reset_id:
+				return
 
 		reset_id = self.pending_reset_id
 		mode = self.pending_reset_mode
-		self.pending_reset_id = None
-		self.pending_reset_mode = None
+		poses_to_apply: Optional[List[Pose]] = None
 
 		if mode == 1:
-			self.get_logger().info("Reset mode=1: restore initial poses")
-			self._apply_pose_set(self.initial_poses)
+			if not self.initial_poses or not self._pose_set_is_safe(self.initial_poses):
+				if self.initial_poses:
+					self.get_logger().warning(
+						"Initial pose set conflicts with current obstacles; resampling initial poses"
+					)
+				sampled = self._sample_pose_set()
+				if sampled is None:
+					return
+				self.initial_poses = sampled
+
+			self.get_logger().info("Reset mode=1: restore validated initial poses")
+			poses_to_apply = self.initial_poses
 		elif mode == 2:
 			self.get_logger().info("Reset mode=2: sample collision-distance random poses")
 			new_poses = self._sample_pose_set()
-			self._apply_pose_set(new_poses)
+			if new_poses is None:
+				return
+			poses_to_apply = new_poses
 		else:
 			self.get_logger().warning(f"Unsupported reset mode: {mode}, fallback to mode=2")
 			new_poses = self._sample_pose_set()
-			self._apply_pose_set(new_poses)
+			if new_poses is None:
+				return
+			poses_to_apply = new_poses
+
+		if poses_to_apply is None:
+			return
+
+		self.pending_reset_id = None
+		self.pending_reset_mode = None
+		self._apply_pose_set(poses_to_apply)
 
 		if reset_id is not None:
 			done_msg = Int32()
