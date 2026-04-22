@@ -8,9 +8,9 @@ source "${SCRIPT_DIR}/_load_config.sh" "${CONFIG_FILE}"
 ARGS=(
   -p "num_pursuers:=${NUM_PURSUERS}"                                  # 可选: 追捕者数量
   -p "num_evaders:=${NUM_EVADERS}"                                    # 可选: 逃避者数量
-  -p "pursuer_algo:=${PURSUER_ALGO}"                                  # 可选: maddpg/cbc_tp_net(占位)
+  -p "pursuer_algo:=${PURSUER_ALGO}"                                  # 可选: maddpg/flocking/cbc_tp_net(回退flocking)
   -p "pursuer_train_mode:=${PURSUER_TRAIN_MODE}"                      # 可选: train_scratch/train_load/eval_only
-  -p "evader_algo:=${EVADER_ALGO}"                                    # 可选: ddpg
+  -p "evader_algo:=${EVADER_ALGO}"                                    # 可选: ddpg/flocking
   -p "evader_train_mode:=${EVADER_TRAIN_MODE}"                        # 可选: train_scratch/train_load/eval_only
 
   -p "max_accel:=${MAX_ACCEL}"                                        # 可选: 动作加速度幅值上限

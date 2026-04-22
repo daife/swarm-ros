@@ -13,6 +13,8 @@ from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from std_msgs.msg import Bool, Float32MultiArray, Int32
 
+from .controllers import ControllerInput, EvaderController, PursuerController
+
 try:
     import torch
     import torch.nn as nn
@@ -168,8 +170,19 @@ class RLPolicyNode(Node):
 
         self.device = self._select_torch_device()
         self._init_models()
+        self._init_controllers()
 
         self.create_timer(0.1, self.control_tick)
+
+    def _init_controllers(self) -> None:
+        self.pursuer_controller = PursuerController(
+            algo=self.pursuer_algo,
+            maddpg_forward=self._forward_pursuer_maddpg_action,
+        )
+        self.evader_controller = EvaderController(
+            algo=self.evader_algo,
+            ddpg_forward=self._forward_evader_ddpg_action,
+        )
 
     def _select_torch_device(self):
         if torch is None:
@@ -220,17 +233,32 @@ class RLPolicyNode(Node):
             self.evader_critic_optim = None
             return
 
-        if self.pursuer_algo == "cbc_tp_net":
-            self.get_logger().warning("cbc_tp_net暂未实现，追捕者将使用启发式控制")
-            self.pursuer_training_enabled = False
+        self.pursuer_algo = self.pursuer_algo.strip().lower()
+        self.evader_algo = self.evader_algo.strip().lower()
 
-        if self.pursuer_algo not in {"maddpg", "cbc_tp_net"}:
+        if self.pursuer_algo == "cbc_tp_net":
+            self.get_logger().warning("cbc_tp_net暂未实现，追捕者控制回退到flocking")
+            self.pursuer_algo = "flocking"
+
+        if self.pursuer_algo not in {"maddpg", "flocking"}:
             self.get_logger().warning(f"Unknown pursuer_algo={self.pursuer_algo}, fallback to maddpg")
             self.pursuer_algo = "maddpg"
 
-        if self.evader_algo not in {"ddpg"}:
+        if self.evader_algo not in {"ddpg", "flocking"}:
             self.get_logger().warning(f"Unknown evader_algo={self.evader_algo}, fallback to ddpg")
             self.evader_algo = "ddpg"
+
+        if self.pursuer_algo != "maddpg" and self.pursuer_training_enabled:
+            self.get_logger().warning(
+                f"pursuer_algo={self.pursuer_algo} 不支持参数训练，自动关闭 pursuer training"
+            )
+            self.pursuer_training_enabled = False
+
+        if self.evader_algo != "ddpg" and self.evader_training_enabled:
+            self.get_logger().warning(
+                f"evader_algo={self.evader_algo} 不支持参数训练，自动关闭 evader training"
+            )
+            self.evader_training_enabled = False
 
         pursuer_actor_lr = self.get_parameter("pursuer_actor_lr").get_parameter_value().double_value
         pursuer_critic_lr = self.get_parameter("pursuer_critic_lr").get_parameter_value().double_value
@@ -261,10 +289,19 @@ class RLPolicyNode(Node):
         self.evader_actor_optim = torch.optim.Adam(self.evader_actor.parameters(), lr=evader_actor_lr)
         self.evader_critic_optim = torch.optim.Adam(self.evader_critic.parameters(), lr=evader_critic_lr)
 
-        if self.pursuer_train_mode in {"train_load", "eval_only"} and self.pursuer_weights:
+        if self.pursuer_algo == "maddpg" and self.pursuer_train_mode in {"train_load", "eval_only"} and self.pursuer_weights:
             self._load_checkpoint(self.pursuer_weights)
-        if self.evader_train_mode in {"train_load", "eval_only"} and self.evader_weights:
+        if self.evader_algo == "ddpg" and self.evader_train_mode in {"train_load", "eval_only"} and self.evader_weights:
             self._load_checkpoint(self.evader_weights)
+
+        if self.pursuer_algo != "maddpg" and self.pursuer_weights:
+            self.get_logger().warning(
+                f"pursuer_algo={self.pursuer_algo} 不使用 pursuer_weights，已忽略"
+            )
+        if self.evader_algo != "ddpg" and self.evader_weights:
+            self.get_logger().warning(
+                f"evader_algo={self.evader_algo} 不使用 evader_weights，已忽略"
+            )
 
         if self.pursuer_train_mode == "eval_only":
             self.pursuer_training_enabled = False
@@ -563,70 +600,43 @@ class RLPolicyNode(Node):
             return np.zeros((0, self.local_obs_dim), dtype=np.float32)
         return np.asarray(obs_rows, dtype=np.float32)
 
-    def _heuristic_pursuer_action(self, obs_row: np.ndarray) -> np.ndarray:
-        dx = obs_row[0]
-        dy = obs_row[1]
-        norm = math.hypot(float(dx), float(dy))
-        if norm < 1e-6:
-            return np.zeros(2, dtype=np.float32)
-        return np.asarray([dx / norm, dy / norm], dtype=np.float32)
+    def _forward_pursuer_maddpg_action(self, idx: int, obs_row: np.ndarray) -> Optional[np.ndarray]:
+        if torch is None or self.pursuer_algo != "maddpg" or not self.pursuer_actors:
+            return None
+        if idx >= len(self.pursuer_actors):
+            return None
 
-    def _heuristic_evader_action(self, obs_row: np.ndarray) -> np.ndarray:
-        dx = obs_row[0]
-        dy = obs_row[1]
-        norm = math.hypot(float(dx), float(dy))
-        if norm < 1e-6:
-            return np.zeros(2, dtype=np.float32)
-        return np.asarray([dx / norm, dy / norm], dtype=np.float32)
+        obs_tensor = torch.tensor(obs_row, dtype=torch.float32, device=self.device).unsqueeze(0)
+        with torch.no_grad():
+            action_tensor = self.pursuer_actors[idx](obs_tensor)
+        return action_tensor.squeeze(0).cpu().numpy().astype(np.float32)
+
+    def _forward_evader_ddpg_action(self, obs_row: np.ndarray) -> Optional[np.ndarray]:
+        if torch is None or self.evader_algo != "ddpg" or self.evader_actor is None:
+            return None
+
+        obs_tensor = torch.tensor(obs_row, dtype=torch.float32, device=self.device).unsqueeze(0)
+        with torch.no_grad():
+            action_tensor = self.evader_actor(obs_tensor)
+        return action_tensor.squeeze(0).cpu().numpy().astype(np.float32)
 
     def _policy_pursuer_actions(self, pursuer_obs: np.ndarray) -> np.ndarray:
-        actions = []
         noise_std = self.get_parameter("exploration_noise_std").get_parameter_value().double_value
-
-        for idx in range(self.num_pursuers):
-            obs_row = pursuer_obs[idx]
-            if (
-                torch is None
-                or self.pursuer_algo != "maddpg"
-                or not self.pursuer_actors
-                or idx >= len(self.pursuer_actors)
-            ):
-                action = self._heuristic_pursuer_action(obs_row)
-            else:
-                obs_tensor = torch.tensor(obs_row, dtype=torch.float32, device=self.device).unsqueeze(0)
-                with torch.no_grad():
-                    action_tensor = self.pursuer_actors[idx](obs_tensor)
-                action = action_tensor.squeeze(0).cpu().numpy()
-                if self.pursuer_training_enabled:
-                    action = action + np.random.normal(0.0, noise_std, size=2)
-                action = np.clip(action, -1.0, 1.0)
-            actions.append(action.astype(np.float32))
-
-        if not actions:
-            return np.zeros((0, 2), dtype=np.float32)
-        return np.asarray(actions, dtype=np.float32)
+        ctrl_input = ControllerInput(
+            obs=pursuer_obs,
+            training_enabled=self.pursuer_training_enabled,
+            noise_std=float(noise_std),
+        )
+        return self.pursuer_controller.compute_actions(ctrl_input)
 
     def _policy_evader_actions(self, evader_obs: np.ndarray) -> np.ndarray:
-        actions = []
         noise_std = self.get_parameter("exploration_noise_std").get_parameter_value().double_value
-
-        for idx in range(self.num_evaders):
-            obs_row = evader_obs[idx]
-            if torch is None or self.evader_algo != "ddpg" or self.evader_actor is None:
-                action = self._heuristic_evader_action(obs_row)
-            else:
-                obs_tensor = torch.tensor(obs_row, dtype=torch.float32, device=self.device).unsqueeze(0)
-                with torch.no_grad():
-                    action_tensor = self.evader_actor(obs_tensor)
-                action = action_tensor.squeeze(0).cpu().numpy()
-                if self.evader_training_enabled:
-                    action = action + np.random.normal(0.0, noise_std, size=2)
-                action = np.clip(action, -1.0, 1.0)
-            actions.append(action.astype(np.float32))
-
-        if not actions:
-            return np.zeros((0, 2), dtype=np.float32)
-        return np.asarray(actions, dtype=np.float32)
+        ctrl_input = ControllerInput(
+            obs=evader_obs,
+            training_enabled=self.evader_training_enabled,
+            noise_std=float(noise_std),
+        )
+        return self.evader_controller.compute_actions(ctrl_input)
 
     def _publish_action(self, agent_id: int, action_xy: np.ndarray) -> None:
         default_scale = self.get_parameter("max_accel").get_parameter_value().double_value

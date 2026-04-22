@@ -215,8 +215,11 @@
 
 算法说明：
 
-- pursuer_algo 支持 maddpg，cbc_tp_net 当前仅占位（未实现网络结构）。
-- evader_algo 当前支持 ddpg。
+- pursuer_algo 支持 maddpg / flocking，cbc_tp_net 当前回退到 flocking。
+- evader_algo 支持 ddpg / flocking。
+- 同角色算法输入输出契约保持一致：
+  - pursuer 控制器输入统一为 [dx, dy, vx, vy, target_x, target_y]，输出统一为二维动作 [ax, ay]。
+  - evader 控制器输入统一为 [dx, dy, vx, vy, pursuer_x, pursuer_y]，输出统一为二维动作 [ax, ay]。
 
 关键参数：
 
@@ -224,10 +227,10 @@
 | --- | --- | --- | --- |
 | num_pursuers | int | 5 | 追捕者数量 |
 | num_evaders | int | 1 | 逃避者数量 |
-| pursuer_algo | string | maddpg | 追捕者算法 |
+| pursuer_algo | string | maddpg | 追捕者算法：maddpg / flocking |
 | pursuer_train_mode | string | train_scratch | train_scratch / train_load / eval_only |
 | pursuer_weights | string | "" | 追捕者权重路径 |
-| evader_algo | string | ddpg | 逃避者算法 |
+| evader_algo | string | ddpg | 逃避者算法：ddpg / flocking |
 | evader_train_mode | string | eval_only | train_scratch / train_load / eval_only |
 | evader_weights | string | "" | 逃避者权重路径 |
 | max_accel | float | 1.0 | 输出加速度缩放 |
@@ -406,10 +409,10 @@ world 已包含：
 | seed_value | 42 | 固定种子 |
 | obstacle_density | 0.3 | 障碍密度 |
 | collision_distance | 0.8 | 碰撞约束采样间距 |
-| pursuer_algo | maddpg | 追捕算法 |
+| pursuer_algo | maddpg | 追捕算法：maddpg / flocking |
 | pursuer_train_mode | train_scratch | 追捕训练模式 |
 | pursuer_weights | "" | 追捕权重 |
-| evader_algo | ddpg | 逃避算法 |
+| evader_algo | ddpg | 逃避算法：ddpg / flocking |
 | evader_train_mode | eval_only | 逃避训练模式 |
 | evader_weights | "" | 逃避权重 |
 | max_accel | 1.0 | 全体基础最大加速度 |
