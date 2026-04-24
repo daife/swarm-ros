@@ -215,8 +215,8 @@
 
 算法说明：
 
-- pursuer_algo 支持 maddpg / flocking，cbc_tp_net 当前回退到 flocking。
-- evader_algo 支持 ddpg / flocking。
+- pursuer_algo 支持 maddpg / flocking，默认是 flocking。
+- evader_algo 支持 ddpg / flocking，默认是 ddpg。
 - 同角色算法输入输出契约保持一致：
   - pursuer 控制器输入统一为 [dx, dy, vx, vy, target_x, target_y]，输出统一为二维动作 [ax, ay]。
   - evader 控制器输入统一为 [dx, dy, vx, vy, pursuer_x, pursuer_y]，输出统一为二维动作 [ax, ay]。
@@ -236,11 +236,11 @@
 | --- | --- | --- | --- |
 | num_pursuers | int | 5 | 追捕者数量 |
 | num_evaders | int | 1 | 逃避者数量 |
-| pursuer_algo | string | maddpg | 追捕者算法：maddpg / flocking |
-| pursuer_train_mode | string | train_scratch | train_scratch / train_load / eval_only |
+| pursuer_algo | string | flocking | 追捕者算法：maddpg / flocking |
+| pursuer_train_mode | string | eval_only | train_scratch / train_load / eval_only |
 | pursuer_weights | string | "" | 追捕者权重路径 |
 | evader_algo | string | ddpg | 逃避者算法：ddpg / flocking |
-| evader_train_mode | string | eval_only | train_scratch / train_load / eval_only |
+| evader_train_mode | string | train_scratch | train_scratch / train_load / eval_only |
 | evader_weights | string | "" | 逃避者权重路径 |
 | max_accel | float | 1.0 | 输出加速度缩放 |
 | pursuer_max_accel | float | -1.0 | 追捕者最大加速度（<=0 回退 max_accel） |

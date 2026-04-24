@@ -140,6 +140,7 @@ class RLPolicyNode(Node):
         self.obstacles: List[Marker] = []
         self.collision_flags: Dict[int, bool] = {i: False for i in range(self.total_agents)}
         self.cmd_publishers: Dict[int, object] = {}
+        self.synthetic_obs_warned_ids = set()
 
         # Update observation dimensions based on TODO requirements
         # Evader: [pos(2), vel(2), rel_obs(2), rel_pursuers(2*num_p)]
@@ -641,6 +642,11 @@ class RLPolicyNode(Node):
                 msg.twist.twist.linear.y,
             )
         if self.use_synthetic_obs:
+            if agent_id not in self.synthetic_obs_warned_ids:
+                self.synthetic_obs_warned_ids.add(agent_id)
+                self.get_logger().warning(
+                    f"agent_{agent_id} odom missing, fallback to synthetic observation"
+                )
             return self._synthetic_kinematics(agent_id)
         return None
 

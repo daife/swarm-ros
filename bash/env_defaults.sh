@@ -59,11 +59,11 @@ export GAZEBO_LINEAR_DRAG="${GAZEBO_LINEAR_DRAG:-0.15}"                # 可选:
 export GAZEBO_CONTROL_REQUIRES_RESET="${GAZEBO_CONTROL_REQUIRES_RESET:-true}" # 可选: 首次 reset 前是否禁止控制回写
 
 # ---------- 23_rl_policy_node.sh ----------
-export PURSUER_ALGO="${PURSUER_ALGO:-maddpg}"             # 可选: maddpg/cbc_tp_net(占位)
-export PURSUER_TRAIN_MODE="${PURSUER_TRAIN_MODE:-train_scratch}"  # 可选: train_scratch/train_load/eval_only
+oexport PURSUER_ALGO="${PURSUER_ALGO:-flocking}"          # 可选: maddpg/flocking，默认用启发式 flocking
+export PURSUER_TRAIN_MODE="${PURSUER_TRAIN_MODE:-eval_only}"  # 可选: train_scratch/train_load/eval_only
 export PURSUER_WEIGHTS="${PURSUER_WEIGHTS:-}"             # 可选: 追捕者权重路径
 export EVADER_ALGO="${EVADER_ALGO:-ddpg}"                 # 可选: ddpg
-export EVADER_TRAIN_MODE="${EVADER_TRAIN_MODE:-eval_only}"  # 可选: train_scratch/train_load/eval_only
+export EVADER_TRAIN_MODE="${EVADER_TRAIN_MODE:-train_scratch}"  # 可选: train_scratch/train_load/eval_only
 export EVADER_WEIGHTS="${EVADER_WEIGHTS:-}"               # 可选: 逃避者权重路径
 export MAX_ACCEL="${MAX_ACCEL:-1.0}"                      # 可选: 动作最大加速度
 export PURSUER_MAX_ACCEL="${PURSUER_MAX_ACCEL:--1.0}"     # 可选: pursuer 最大加速度，<=0则回退 MAX_ACCEL

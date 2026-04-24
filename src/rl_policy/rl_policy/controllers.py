@@ -79,7 +79,8 @@ class PursuerController:
         rel_obs = np.asarray([obs_row[4], obs_row[5]], dtype=np.float32)
         rel_target = np.asarray([obs_row[6], obs_row[7]], dtype=np.float32)
 
-        chase = 1.15 * _normalize(rel_target)
+        # Keep target pursuit as primary objective but reserve authority for separation.
+        chase = 0.95 * _normalize(rel_target)
         obstacle_avoid = self._obstacle_avoidance(rel_obs)
         teammate_avoid = np.zeros(2, dtype=np.float32)
 
@@ -103,24 +104,28 @@ class PursuerController:
         if pos[1] < -half_extent + wall_margin:
             wall[1] += ((-half_extent + wall_margin) - pos[1]) / wall_margin
 
-        damping = -0.28 * vel
-        blended = chase + obstacle_avoid + teammate_avoid + 0.9 * wall + damping
+        damping = -0.30 * vel
+        blended = chase + 1.2 * obstacle_avoid + 1.35 * teammate_avoid + 0.9 * wall + damping
         if _norm(blended) < 1e-6:
             return np.zeros(2, dtype=np.float32)
         return _normalize(blended)
 
     def _obstacle_avoidance(self, rel_obs: np.ndarray) -> np.ndarray:
         dist = _norm(rel_obs)
-        if dist < 1e-6 or dist >= 2.6:
+        if dist < 1e-6 or dist >= 3.2:
             return np.zeros(2, dtype=np.float32)
-        weight = 1.1 * (1.0 / max(dist, 1e-3) - 1.0 / 2.6)
+        weight = 1.25 * (1.0 / max(dist, 1e-3) - 1.0 / 3.2)
         return (-rel_obs / dist * weight).astype(np.float32)
 
     def _teammate_avoidance(self, rel_pos: np.ndarray) -> np.ndarray:
         dist = _norm(rel_pos)
-        if dist < 1e-6 or dist >= 2.0:
+        if dist < 1e-6 or dist >= 6.0:
             return np.zeros(2, dtype=np.float32)
-        weight = 1.0 * (1.0 / max(dist, 1e-3) - 1.0 / 2.0)
+        # Two-zone separation: strong anti-collision nearby + weak de-crowding farther away.
+        if dist < 2.2:
+            weight = 1.4 * (1.0 / max(dist, 1e-3) - 1.0 / 2.2)
+        else:
+            weight = 0.28 * (1.0 / dist - 1.0 / 6.0)
         return (-rel_pos / dist * weight).astype(np.float32)
 
 
