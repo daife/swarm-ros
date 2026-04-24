@@ -59,7 +59,7 @@ export GAZEBO_LINEAR_DRAG="${GAZEBO_LINEAR_DRAG:-0.15}"                # 可选:
 export GAZEBO_CONTROL_REQUIRES_RESET="${GAZEBO_CONTROL_REQUIRES_RESET:-true}" # 可选: 首次 reset 前是否禁止控制回写
 
 # ---------- 23_rl_policy_node.sh ----------
-oexport PURSUER_ALGO="${PURSUER_ALGO:-flocking}"          # 可选: maddpg/flocking，默认用启发式 flocking
+export PURSUER_ALGO="${PURSUER_ALGO:-flocking}"          # 可选: maddpg/flocking，默认用启发式 flocking
 export PURSUER_TRAIN_MODE="${PURSUER_TRAIN_MODE:-eval_only}"  # 可选: train_scratch/train_load/eval_only
 export PURSUER_WEIGHTS="${PURSUER_WEIGHTS:-}"             # 可选: 追捕者权重路径
 export EVADER_ALGO="${EVADER_ALGO:-ddpg}"                 # 可选: ddpg
