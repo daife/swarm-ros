@@ -221,6 +221,15 @@
   - pursuer 控制器输入统一为 [dx, dy, vx, vy, target_x, target_y]，输出统一为二维动作 [ax, ay]。
   - evader 控制器输入统一为 [dx, dy, vx, vy, pursuer_x, pursuer_y]，输出统一为二维动作 [ax, ay]。
 
+控制策略选择方式：
+
+1. 默认值集中在 [bash/env_defaults.sh](bash/env_defaults.sh) 里，优先修改这里或复制一份 [bash/configs/*.env.sh](bash/configs) 作为实验配置。
+2. 追捕者和逃避者可以独立设置，不需要绑定成同一组策略：
+   - pursuer: `pursuer_algo` / `pursuer_train_mode` / `pursuer_weights`
+   - evader: `evader_algo` / `evader_train_mode` / `evader_weights`
+3. 推荐通过启动脚本传入配置文件，例如：`./bash/30_training_launch.sh bash/configs/eval_only.env.sh`。
+4. 如果你直接改了源码里的默认值或策略分支，再执行 `colcon build --base-paths src` 后重新 source 工作区。
+
 关键参数：
 
 | 参数名 | 类型 | 默认值 | 说明 |
@@ -452,6 +461,13 @@ Launch 参数细化说明：
   - `auto`: 优先 CUDA，不可用则回退 CPU。
   - `cpu`: 强制 CPU。
   - `cuda` / `cuda:0`: 强制指定 GPU（若不可用会自动回退 CPU 并告警）。
+
+补充说明：
+
+1. 追捕者常用组合是 `pursuer_algo=maddpg`，`pursuer_train_mode=train_scratch` 或 `train_load`。
+2. 逃避者常用组合是 `evader_algo=ddpg`，`evader_train_mode=eval_only` 或 `train_load`。
+3. 如果只想测试启发式控制器，可以把 `pursuer_algo` 设为 `flocking`，把 `evader_algo` 设为 `flocking`。
+4. 以上参数都可以放进对应的 env 配置文件里，不需要逐个在命令行手输。
 
 ## 5. 主闭环链路
 “无人机状态输入-策略处理-控制输出”的主闭环在两个节点：

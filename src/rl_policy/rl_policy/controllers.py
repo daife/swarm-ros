@@ -36,15 +36,6 @@ def _norm(v: np.ndarray) -> float:
     return float(np.linalg.norm(v))
 
 
-def _safe_repulsion(rel_vec: np.ndarray, influence_radius: float, gain: float) -> np.ndarray:
-    dist = _norm(rel_vec)
-    if dist < 1e-6 or dist >= influence_radius:
-        return np.zeros(2, dtype=np.float32)
-    # Inverse-distance weighting to strongly repel close neighbors.
-    weight = gain * (1.0 / max(dist, 1e-3) - 1.0 / influence_radius)
-    return (-rel_vec / dist * weight).astype(np.float32)
-
-
 class PursuerController:
     def __init__(self, algo: str, maddpg_forward: PursuerForwardFn) -> None:
         normalized_algo = algo.strip().lower()
@@ -89,14 +80,14 @@ class PursuerController:
         rel_target = np.asarray([obs_row[6], obs_row[7]], dtype=np.float32)
 
         chase = 1.15 * _normalize(rel_target)
-        obstacle_avoid = _safe_repulsion(rel_obs, influence_radius=2.6, gain=1.1)
+        obstacle_avoid = self._obstacle_avoidance(rel_obs)
         teammate_avoid = np.zeros(2, dtype=np.float32)
 
         block_size = 8
         start = 8
         while start + block_size <= obs_row.size:
             rel_pos_j = np.asarray([obs_row[start], obs_row[start + 1]], dtype=np.float32)
-            teammate_avoid += _safe_repulsion(rel_pos_j, influence_radius=2.0, gain=1.0)
+            teammate_avoid += self._teammate_avoidance(rel_pos_j)
             start += block_size
 
         # Soft wall repulsion using known map scale from defaults ([-10, 10] region).
@@ -117,6 +108,20 @@ class PursuerController:
         if _norm(blended) < 1e-6:
             return np.zeros(2, dtype=np.float32)
         return _normalize(blended)
+
+    def _obstacle_avoidance(self, rel_obs: np.ndarray) -> np.ndarray:
+        dist = _norm(rel_obs)
+        if dist < 1e-6 or dist >= 2.6:
+            return np.zeros(2, dtype=np.float32)
+        weight = 1.1 * (1.0 / max(dist, 1e-3) - 1.0 / 2.6)
+        return (-rel_obs / dist * weight).astype(np.float32)
+
+    def _teammate_avoidance(self, rel_pos: np.ndarray) -> np.ndarray:
+        dist = _norm(rel_pos)
+        if dist < 1e-6 or dist >= 2.0:
+            return np.zeros(2, dtype=np.float32)
+        weight = 1.0 * (1.0 / max(dist, 1e-3) - 1.0 / 2.0)
+        return (-rel_pos / dist * weight).astype(np.float32)
 
 
 class EvaderController:
@@ -162,10 +167,10 @@ class EvaderController:
         while start + 1 < obs_row.size:
             rel_p = np.asarray([obs_row[start], obs_row[start + 1]], dtype=np.float32)
             # rel_p is pursuer-relative (pursuer - evader), so use negative for evasion.
-            evade += _safe_repulsion(rel_p, influence_radius=6.0, gain=1.35)
+            evade += self._pursuer_repulsion(rel_p)
             start += 2
 
-        obstacle_avoid = _safe_repulsion(rel_obs, influence_radius=2.8, gain=1.25)
+        obstacle_avoid = self._obstacle_avoidance(rel_obs)
 
         wall = np.zeros(2, dtype=np.float32)
         wall_margin = 1.7
@@ -184,3 +189,17 @@ class EvaderController:
         if math.hypot(float(blended[0]), float(blended[1])) < 1e-6:
             return np.zeros(2, dtype=np.float32)
         return _normalize(blended)
+
+    def _pursuer_repulsion(self, rel_p: np.ndarray) -> np.ndarray:
+        dist = _norm(rel_p)
+        if dist < 1e-6 or dist >= 6.0:
+            return np.zeros(2, dtype=np.float32)
+        weight = 1.35 * (1.0 / max(dist, 1e-3) - 1.0 / 6.0)
+        return (-rel_p / dist * weight).astype(np.float32)
+
+    def _obstacle_avoidance(self, rel_obs: np.ndarray) -> np.ndarray:
+        dist = _norm(rel_obs)
+        if dist < 1e-6 or dist >= 2.8:
+            return np.zeros(2, dtype=np.float32)
+        weight = 1.25 * (1.0 / max(dist, 1e-3) - 1.0 / 2.8)
+        return (-rel_obs / dist * weight).astype(np.float32)
