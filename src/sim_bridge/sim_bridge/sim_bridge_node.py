@@ -132,14 +132,34 @@ class SimBridgeNode(Node):
         self.model_ready[agent_id] = True
         self.positions[agent_id][0] = msg.pose.pose.position.x
         self.positions[agent_id][1] = msg.pose.pose.position.y
-        self.velocities[agent_id][0] = msg.twist.twist.linear.x
-        self.velocities[agent_id][1] = msg.twist.twist.linear.y
+        world_vx, world_vy = self._linear_velocity_world_xy(msg)
+        self.velocities[agent_id][0] = world_vx
+        self.velocities[agent_id][1] = world_vy
 
         msg.pose.pose.position.z = self.fixed_z
+        msg.twist.twist.linear.x = world_vx
+        msg.twist.twist.linear.y = world_vy
         msg.twist.twist.linear.z = 0.0
         msg.twist.twist.angular.x = 0.0
         msg.twist.twist.angular.y = 0.0
         self.odom_pubs[agent_id].publish(msg)
+
+    def _linear_velocity_world_xy(self, msg: Odometry) -> Tuple[float, float]:
+        # Odometry twist is expressed in child_frame_id/base_link by convention.
+        # Rotate it into the world/odom frame because policy and control logic use world x/y.
+        q = msg.pose.pose.orientation
+        siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
+        cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+        yaw = math.atan2(siny_cosp, cosy_cosp)
+
+        vx_body = float(msg.twist.twist.linear.x)
+        vy_body = float(msg.twist.twist.linear.y)
+        cos_yaw = math.cos(yaw)
+        sin_yaw = math.sin(yaw)
+        return (
+            vx_body * cos_yaw - vy_body * sin_yaw,
+            vx_body * sin_yaw + vy_body * cos_yaw,
+        )
 
     def on_model_contacts(self, agent_id: int, msg: Contacts) -> None:
         if self.control_requires_reset and (not self.has_received_reset or not self.has_received_episode_start):
