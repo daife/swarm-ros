@@ -12,6 +12,7 @@ from geometry_msgs.msg import Accel
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from std_msgs.msg import Bool, Float32MultiArray, Int32
+from visualization_msgs.msg import Marker, MarkerArray
 
 from .controllers import ControllerInput, EvaderController, PursuerController
 
@@ -113,7 +114,6 @@ class RLPolicyNode(Node):
         self.num_pursuers = self.get_parameter("num_pursuers").get_parameter_value().integer_value
         self.num_evaders = self.get_parameter("num_evaders").get_parameter_value().integer_value
         self.total_agents = self.num_pursuers + self.num_evaders
-        self.local_obs_dim = 6
         self.global_state_dim = 4 * self.total_agents
 
         self.pursuer_algo = self.get_parameter("pursuer_algo").get_parameter_value().string_value
@@ -128,8 +128,18 @@ class RLPolicyNode(Node):
         )
 
         self.states: Dict[int, Odometry] = {}
+        self.obstacles: List[Marker] = []
         self.collision_flags: Dict[int, bool] = {i: False for i in range(self.total_agents)}
         self.cmd_publishers: Dict[int, object] = {}
+
+        # Update observation dimensions based on TODO requirements
+        # Evader: [pos(2), vel(2), rel_obs(2), rel_pursuers(2*num_p)]
+        self.evader_obs_dim = 6 + 2 * self.num_pursuers
+        # Pursuer: 
+        # Individual: [pos(2), vel(2), rel_obs(2), rel_target(2)] -> 8
+        # Collaborative: [rel_p_j(2), rvel_p_j(2), rel_obs_p_j(2), rel_target_p_j(2)] -> 8 * (num_p - 1)
+        self.pursuer_obs_dim = 8 * self.num_pursuers
+        self.global_state_dim = 4 * self.total_agents
 
         for agent_id in range(self.total_agents):
             self.create_subscription(Odometry, f"/agent_{agent_id}/odom", partial(self.on_odom, agent_id), 10)
@@ -141,6 +151,12 @@ class RLPolicyNode(Node):
             )
             self.cmd_publishers[agent_id] = self.create_publisher(Accel, f"/agent_{agent_id}/cmd_accel", 10)
 
+        obstacle_qos = QoSProfile(
+            depth=1,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+        )
+        self.create_subscription(MarkerArray, "/world_manager/obstacles", self.on_obstacles, obstacle_qos)
         self.create_subscription(Int32, "/agent_manager/reset_done", self.on_agent_reset_done, 10)
         self.create_subscription(Int32, "/scheduler/reset_begin", self.on_reset_begin, 10)
         self.create_subscription(Int32, "/scheduler/episode_start", self.on_episode_start, 10)
@@ -268,7 +284,7 @@ class RLPolicyNode(Node):
         joint_action_dim = 2 * self.num_pursuers
         critic_input_dim = self.global_state_dim + joint_action_dim
 
-        self.pursuer_actors = [Actor(self.local_obs_dim, 2).to(self.device) for _ in range(self.num_pursuers)]
+        self.pursuer_actors = [Actor(self.pursuer_obs_dim, 2).to(self.device) for _ in range(self.num_pursuers)]
         self.pursuer_target_actors = [copy.deepcopy(actor) for actor in self.pursuer_actors]
         self.pursuer_critics = [Critic(critic_input_dim).to(self.device) for _ in range(self.num_pursuers)]
         self.pursuer_target_critics = [copy.deepcopy(critic) for critic in self.pursuer_critics]
@@ -282,9 +298,9 @@ class RLPolicyNode(Node):
             for critic in self.pursuer_critics
         ]
 
-        self.evader_actor = Actor(self.local_obs_dim, 2).to(self.device)
+        self.evader_actor = Actor(self.evader_obs_dim, 2).to(self.device)
         self.evader_target_actor = copy.deepcopy(self.evader_actor)
-        self.evader_critic = Critic(self.local_obs_dim + 2).to(self.device)
+        self.evader_critic = Critic(self.evader_obs_dim + 2).to(self.device)
         self.evader_target_critic = copy.deepcopy(self.evader_critic)
         self.evader_actor_optim = torch.optim.Adam(self.evader_actor.parameters(), lr=evader_actor_lr)
         self.evader_critic_optim = torch.optim.Adam(self.evader_critic.parameters(), lr=evader_critic_lr)
@@ -439,6 +455,76 @@ class RLPolicyNode(Node):
     def on_odom(self, agent_id: int, msg: Odometry) -> None:
         self.states[agent_id] = msg
 
+    def on_obstacles(self, msg: MarkerArray) -> None:
+        self.obstacles = list(msg.markers)
+
+    def _get_closest_obstacle_surface_rel(self, agent_pos: Tuple[float, float]) -> Tuple[float, float]:
+        if not self.obstacles:
+            return 0.0, 0.0
+
+        ax, ay = agent_pos
+        min_dist_sq = float("inf")
+        closest_rel = (0.0, 0.0)
+
+        for mk in self.obstacles:
+            ox = mk.pose.position.x
+            oy = mk.pose.position.y
+            sx = mk.scale.x
+            sy = mk.scale.y
+
+            if mk.type == Marker.CUBE:
+                # Closest point on rectangle surface
+                half_w = sx / 2.0
+                half_l = sy / 2.0
+                
+                # Clamp agent position to rectangle bounds
+                cx = max(ox - half_w, min(ax, ox + half_w))
+                cy = max(oy - half_l, min(ay, oy + half_l))
+                
+                dist_sq = (ax - cx)**2 + (ay - cy)**2
+                
+                # If agent is inside, cx, cy == ax, ay. We need closest edge.
+                if dist_sq < 1e-7:
+                    dx_left = ax - (ox - half_w)
+                    dx_right = (ox + half_w) - ax
+                    dy_bottom = ay - (oy - half_l)
+                    dy_top = (oy + half_l) - ay
+                    min_edge_dist = min(dx_left, dx_right, dy_bottom, dy_top)
+                    if min_edge_dist == dx_left:
+                        cx, cy = ox - half_w, ay
+                    elif min_edge_dist == dx_right:
+                        cx, cy = ox + half_w, ay
+                    elif min_edge_dist == dy_bottom:
+                        cx, cy = ax, oy - half_l
+                    else:
+                        cx, cy = ax, oy + half_l
+                    dist_sq = min_edge_dist**2
+
+                if dist_sq < min_dist_sq:
+                    min_dist_sq = dist_sq
+                    closest_rel = (cx - ax, cy - ay)
+
+            elif mk.type == Marker.CYLINDER:
+                # Closest point on cylinder surface
+                radius = sx / 2.0
+                dx = ax - ox
+                dy = ay - oy
+                dist_center = math.hypot(dx, dy)
+                
+                if dist_center < 1e-7:
+                    cx, cy = ox + radius, oy # Arbitrary direction if exactly at center
+                    dist_sq = radius**2
+                else:
+                    cx = ox + (dx / dist_center) * radius
+                    cy = oy + (dy / dist_center) * radius
+                    dist_sq = (ax - cx)**2 + (ay - cy)**2
+                
+                if dist_sq < min_dist_sq:
+                    min_dist_sq = dist_sq
+                    closest_rel = (cx - ax, cy - ay)
+
+        return closest_rel
+
     def on_collision(self, agent_id: int, msg: Bool) -> None:
         if msg.data:
             self.collision_flags[agent_id] = True
@@ -573,16 +659,39 @@ class RLPolicyNode(Node):
 
     def _build_pursuer_obs(self) -> Optional[np.ndarray]:
         obs_rows = []
-        for pid in range(self.num_pursuers):
-            pkin = self._agent_kinematics(pid)
-            nearest = self._nearest_evader_for_pursuer(pid)
-            if pkin is None or nearest is None:
+        target_kin = self._agent_kinematics(self.num_pursuers) # Assume first evader is the target
+        if target_kin is None:
+            return None
+        tx, ty, tvx, tvy = target_kin
+
+        for i in range(self.num_pursuers):
+            pkin_i = self._agent_kinematics(i)
+            if pkin_i is None:
                 return None
-            px, py, pvx, pvy = pkin
-            ex, ey, _, _ = nearest
-            obs_rows.append([ex - px, ey - py, pvx, pvy, ex, ey])
+            px_i, py_i, pvx_i, pvy_i = pkin_i
+            
+            # Individual state
+            rel_obs_i = self._get_closest_obstacle_surface_rel((px_i, py_i))
+            # Individual: [pos(2), vel(2), rel_obs(2), rel_target(2)]
+            row = [px_i, py_i, pvx_i, pvy_i, rel_obs_i[0], rel_obs_i[1], tx - px_i, ty - py_i]
+
+            # Collaborative state
+            for j in range(self.num_pursuers):
+                if i == j:
+                    continue
+                pkin_j = self._agent_kinematics(j)
+                if pkin_j is None:
+                    return None
+                px_j, py_j, pvx_j, pvy_j = pkin_j
+                
+                rel_obs_j = self._get_closest_obstacle_surface_rel((px_j, py_j))
+                # Collaborative: [rel_pos(2), rel_vel(2), rel_obs_j(2), rel_target_j(2)]
+                row.extend([px_j - px_i, py_j - py_i, pvx_j - pvx_i, pvy_j - pvy_i, rel_obs_j[0], rel_obs_j[1], tx - px_j, ty - py_j])
+            
+            obs_rows.append(row)
+
         if not obs_rows:
-            return np.zeros((0, self.local_obs_dim), dtype=np.float32)
+            return np.zeros((0, self.pursuer_obs_dim), dtype=np.float32)
         return np.asarray(obs_rows, dtype=np.float32)
 
     def _build_evader_obs(self) -> Optional[np.ndarray]:
@@ -590,14 +699,26 @@ class RLPolicyNode(Node):
         for eidx in range(self.num_evaders):
             eid = self.num_pursuers + eidx
             ekin = self._agent_kinematics(eid)
-            nearest = self._nearest_pursuer_for_evader(eid)
-            if ekin is None or nearest is None:
+            if ekin is None:
                 return None
             ex, ey, evx, evy = ekin
-            px, py, _, _ = nearest
-            obs_rows.append([ex - px, ey - py, evx, evy, px, py])
+            
+            rel_obs = self._get_closest_obstacle_surface_rel((ex, ey))
+            # Evader: [pos(2), vel(2), rel_obs(2)]
+            row = [ex, ey, evx, evy, rel_obs[0], rel_obs[1]]
+
+            # Relative pursuers
+            for pid in range(self.num_pursuers):
+                pkin = self._agent_kinematics(pid)
+                if pkin is None:
+                    return None
+                px, py, _, _ = pkin
+                row.extend([px - ex, py - ey])
+            
+            obs_rows.append(row)
+
         if not obs_rows:
-            return np.zeros((0, self.local_obs_dim), dtype=np.float32)
+            return np.zeros((0, self.evader_obs_dim), dtype=np.float32)
         return np.asarray(obs_rows, dtype=np.float32)
 
     def _forward_pursuer_maddpg_action(self, idx: int, obs_row: np.ndarray) -> Optional[np.ndarray]:

@@ -67,9 +67,9 @@ class PursuerController:
         return np.asarray(actions, dtype=np.float32)
 
     def _flocking_action(self, obs_row: np.ndarray) -> np.ndarray:
-        # Input contract is identical to MADDPG local obs: [dx, dy, vx, vy, tx, ty].
-        dx = float(obs_row[0])
-        dy = float(obs_row[1])
+        # New individual state: [px, py, pvx, pvy, rel_obs_x, rel_obs_y, rel_target_x, rel_target_y]
+        dx = float(obs_row[6])
+        dy = float(obs_row[7])
         vx = float(obs_row[2])
         vy = float(obs_row[3])
 
@@ -115,9 +115,9 @@ class EvaderController:
         return np.asarray(actions, dtype=np.float32)
 
     def _flocking_action(self, obs_row: np.ndarray) -> np.ndarray:
-        # Input contract is identical to DDPG local obs: [dx, dy, vx, vy, px, py].
-        dx = float(obs_row[0])
-        dy = float(obs_row[1])
+        # New evader state: [ex, ey, evx, evy, rel_obs_x, rel_obs_y, rel_p1_x, rel_p1_y, ...]
+        dx = float(obs_row[6])
+        dy = float(obs_row[7])
         vx = float(obs_row[2])
         vy = float(obs_row[3])
 
