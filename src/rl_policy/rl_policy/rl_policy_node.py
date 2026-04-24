@@ -2,6 +2,7 @@ import copy
 import math
 import os
 import random
+from dataclasses import dataclass
 from collections import deque
 from functools import partial
 from typing import Deque, Dict, List, Optional, Tuple
@@ -75,6 +76,13 @@ class Critic(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.net(x)
+
+
+@dataclass
+class ObservationSnapshot:
+    positions: np.ndarray
+    velocities: np.ndarray
+    obstacle_rel: np.ndarray
 
 
 class RLPolicyNode(Node):
@@ -636,14 +644,30 @@ class RLPolicyNode(Node):
             return self._synthetic_kinematics(agent_id)
         return None
 
-    def _build_global_state(self) -> Optional[np.ndarray]:
-        values: List[float] = []
+    def _build_observation_snapshot(self) -> Optional[ObservationSnapshot]:
+        positions = np.zeros((self.total_agents, 2), dtype=np.float32)
+        velocities = np.zeros((self.total_agents, 2), dtype=np.float32)
+        obstacle_rel = np.zeros((self.total_agents, 2), dtype=np.float32)
+
         for aid in range(self.total_agents):
             kin = self._agent_kinematics(aid)
             if kin is None:
                 return None
-            values.extend([kin[0], kin[1], kin[2], kin[3]])
-        return np.asarray(values, dtype=np.float32)
+            x, y, vx, vy = kin
+            positions[aid] = [x, y]
+            velocities[aid] = [vx, vy]
+            obstacle_rel[aid] = self._get_closest_obstacle_surface_rel((x, y))
+
+        return ObservationSnapshot(positions=positions, velocities=velocities, obstacle_rel=obstacle_rel)
+
+    def _build_global_state(self, snapshot: ObservationSnapshot) -> np.ndarray:
+        return np.concatenate([snapshot.positions, snapshot.velocities], axis=1).reshape(-1).astype(np.float32)
+
+    def _relative_position(self, snapshot: ObservationSnapshot, src_id: int, dst_id: int) -> np.ndarray:
+        return (snapshot.positions[dst_id] - snapshot.positions[src_id]).astype(np.float32)
+
+    def _relative_velocity(self, snapshot: ObservationSnapshot, src_id: int, dst_id: int) -> np.ndarray:
+        return (snapshot.velocities[dst_id] - snapshot.velocities[src_id]).astype(np.float32)
 
     def _nearest_evader_for_pursuer(self, pursuer_id: int) -> Optional[Tuple[float, float, float, float]]:
         pkin = self._agent_kinematics(pursuer_id)
@@ -682,36 +706,28 @@ class RLPolicyNode(Node):
                 nearest = (px, py, pvx, pvy)
         return nearest
 
-    def _build_pursuer_obs(self) -> Optional[np.ndarray]:
+    def _build_pursuer_obs(self, snapshot: ObservationSnapshot) -> np.ndarray:
         obs_rows = []
-        target_kin = self._agent_kinematics(self.num_pursuers) # Assume first evader is the target
-        if target_kin is None:
-            return None
-        tx, ty, tvx, tvy = target_kin
+        target_id = self.num_pursuers  # Assume first evader is the target
 
         for i in range(self.num_pursuers):
-            pkin_i = self._agent_kinematics(i)
-            if pkin_i is None:
-                return None
-            px_i, py_i, pvx_i, pvy_i = pkin_i
-            
-            # Individual state
-            rel_obs_i = self._get_closest_obstacle_surface_rel((px_i, py_i))
+            px_i, py_i = snapshot.positions[i]
+            pvx_i, pvy_i = snapshot.velocities[i]
+
             # Individual: [pos(2), vel(2), rel_obs(2), rel_target(2)]
-            row = [px_i, py_i, pvx_i, pvy_i, rel_obs_i[0], rel_obs_i[1], tx - px_i, ty - py_i]
+            rel_target_i = self._relative_position(snapshot, i, target_id)
+            row = [px_i, py_i, pvx_i, pvy_i, snapshot.obstacle_rel[i, 0], snapshot.obstacle_rel[i, 1], rel_target_i[0], rel_target_i[1]]
 
             # Collaborative state
             for j in range(self.num_pursuers):
                 if i == j:
                     continue
-                pkin_j = self._agent_kinematics(j)
-                if pkin_j is None:
-                    return None
-                px_j, py_j, pvx_j, pvy_j = pkin_j
-                
-                rel_obs_j = self._get_closest_obstacle_surface_rel((px_j, py_j))
+                px_j, py_j = snapshot.positions[j]
+                rel_vel_j = self._relative_velocity(snapshot, i, j)
+
                 # Collaborative: [rel_pos(2), rel_vel(2), rel_obs_j(2), rel_target_j(2)]
-                row.extend([px_j - px_i, py_j - py_i, pvx_j - pvx_i, pvy_j - pvy_i, rel_obs_j[0], rel_obs_j[1], tx - px_j, ty - py_j])
+                rel_target_j = self._relative_position(snapshot, j, target_id)
+                row.extend([px_j - px_i, py_j - py_i, rel_vel_j[0], rel_vel_j[1], snapshot.obstacle_rel[j, 0], snapshot.obstacle_rel[j, 1], rel_target_j[0], rel_target_j[1]])
             
             obs_rows.append(row)
 
@@ -719,26 +735,20 @@ class RLPolicyNode(Node):
             return np.zeros((0, self.pursuer_obs_dim), dtype=np.float32)
         return np.asarray(obs_rows, dtype=np.float32)
 
-    def _build_evader_obs(self) -> Optional[np.ndarray]:
+    def _build_evader_obs(self, snapshot: ObservationSnapshot) -> np.ndarray:
         obs_rows = []
         for eidx in range(self.num_evaders):
             eid = self.num_pursuers + eidx
-            ekin = self._agent_kinematics(eid)
-            if ekin is None:
-                return None
-            ex, ey, evx, evy = ekin
-            
-            rel_obs = self._get_closest_obstacle_surface_rel((ex, ey))
+            ex, ey = snapshot.positions[eid]
+            evx, evy = snapshot.velocities[eid]
+
             # Evader: [pos(2), vel(2), rel_obs(2)]
-            row = [ex, ey, evx, evy, rel_obs[0], rel_obs[1]]
+            row = [ex, ey, evx, evy, snapshot.obstacle_rel[eid, 0], snapshot.obstacle_rel[eid, 1]]
 
             # Relative pursuers
             for pid in range(self.num_pursuers):
-                pkin = self._agent_kinematics(pid)
-                if pkin is None:
-                    return None
-                px, py, _, _ = pkin
-                row.extend([px - ex, py - ey])
+                rel_pos = self._relative_position(snapshot, eid, pid)
+                row.extend([rel_pos[0], rel_pos[1]])
             
             obs_rows.append(row)
 
@@ -1004,11 +1014,13 @@ class RLPolicyNode(Node):
         if self.num_evaders <= 0:
             return
 
-        global_state = self._build_global_state()
-        pursuer_obs = self._build_pursuer_obs()
-        evader_obs = self._build_evader_obs()
-        if global_state is None or pursuer_obs is None or evader_obs is None:
+        snapshot = self._build_observation_snapshot()
+        if snapshot is None:
             return
+
+        global_state = self._build_global_state(snapshot)
+        pursuer_obs = self._build_pursuer_obs(snapshot)
+        evader_obs = self._build_evader_obs(snapshot)
 
         pursuer_actions = self._policy_pursuer_actions(pursuer_obs)
         evader_actions = self._policy_evader_actions(evader_obs)
