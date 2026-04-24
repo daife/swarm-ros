@@ -32,6 +32,19 @@ def _sanitize_action(action: Optional[np.ndarray]) -> Optional[np.ndarray]:
     return arr[:2]
 
 
+def _norm(v: np.ndarray) -> float:
+    return float(np.linalg.norm(v))
+
+
+def _safe_repulsion(rel_vec: np.ndarray, influence_radius: float, gain: float) -> np.ndarray:
+    dist = _norm(rel_vec)
+    if dist < 1e-6 or dist >= influence_radius:
+        return np.zeros(2, dtype=np.float32)
+    # Inverse-distance weighting to strongly repel close neighbors.
+    weight = gain * (1.0 / max(dist, 1e-3) - 1.0 / influence_radius)
+    return (-rel_vec / dist * weight).astype(np.float32)
+
+
 class PursuerController:
     def __init__(self, algo: str, maddpg_forward: PursuerForwardFn) -> None:
         normalized_algo = algo.strip().lower()
@@ -67,19 +80,43 @@ class PursuerController:
         return np.asarray(actions, dtype=np.float32)
 
     def _flocking_action(self, obs_row: np.ndarray) -> np.ndarray:
-        # New individual state: [px, py, pvx, pvy, rel_obs_x, rel_obs_y, rel_target_x, rel_target_y]
-        dx = float(obs_row[6])
-        dy = float(obs_row[7])
-        vx = float(obs_row[2])
-        vy = float(obs_row[3])
+        # Pursuer row format:
+        # [px, py, pvx, pvy, rel_obs_x, rel_obs_y, rel_target_x, rel_target_y,
+        #  (rel_pos_j_x, rel_pos_j_y, rel_vel_j_x, rel_vel_j_y, rel_obs_j_x, rel_obs_j_y, rel_target_j_x, rel_target_j_y)*]
+        pos = np.asarray([obs_row[0], obs_row[1]], dtype=np.float32)
+        vel = np.asarray([obs_row[2], obs_row[3]], dtype=np.float32)
+        rel_obs = np.asarray([obs_row[4], obs_row[5]], dtype=np.float32)
+        rel_target = np.asarray([obs_row[6], obs_row[7]], dtype=np.float32)
 
-        chase_vec = _normalize(np.asarray([dx, dy], dtype=np.float32))
-        damping_vec = -0.2 * np.asarray([vx, vy], dtype=np.float32)
-        blended = chase_vec + damping_vec
-        norm = float(np.linalg.norm(blended))
-        if norm > 1.0:
-            blended = blended / norm
-        return blended.astype(np.float32)
+        chase = 1.15 * _normalize(rel_target)
+        obstacle_avoid = _safe_repulsion(rel_obs, influence_radius=2.6, gain=1.1)
+        teammate_avoid = np.zeros(2, dtype=np.float32)
+
+        block_size = 8
+        start = 8
+        while start + block_size <= obs_row.size:
+            rel_pos_j = np.asarray([obs_row[start], obs_row[start + 1]], dtype=np.float32)
+            teammate_avoid += _safe_repulsion(rel_pos_j, influence_radius=2.0, gain=1.0)
+            start += block_size
+
+        # Soft wall repulsion using known map scale from defaults ([-10, 10] region).
+        wall = np.zeros(2, dtype=np.float32)
+        wall_margin = 1.6
+        half_extent = 10.0
+        if pos[0] > half_extent - wall_margin:
+            wall[0] -= (pos[0] - (half_extent - wall_margin)) / wall_margin
+        if pos[0] < -half_extent + wall_margin:
+            wall[0] += ((-half_extent + wall_margin) - pos[0]) / wall_margin
+        if pos[1] > half_extent - wall_margin:
+            wall[1] -= (pos[1] - (half_extent - wall_margin)) / wall_margin
+        if pos[1] < -half_extent + wall_margin:
+            wall[1] += ((-half_extent + wall_margin) - pos[1]) / wall_margin
+
+        damping = -0.28 * vel
+        blended = chase + obstacle_avoid + teammate_avoid + 0.9 * wall + damping
+        if _norm(blended) < 1e-6:
+            return np.zeros(2, dtype=np.float32)
+        return _normalize(blended)
 
 
 class EvaderController:
@@ -115,15 +152,35 @@ class EvaderController:
         return np.asarray(actions, dtype=np.float32)
 
     def _flocking_action(self, obs_row: np.ndarray) -> np.ndarray:
-        # New evader state: [ex, ey, evx, evy, rel_obs_x, rel_obs_y, rel_p1_x, rel_p1_y, ...]
-        dx = float(obs_row[6])
-        dy = float(obs_row[7])
-        vx = float(obs_row[2])
-        vy = float(obs_row[3])
+        # Evader row format: [ex, ey, evx, evy, rel_obs_x, rel_obs_y, rel_p1_x, rel_p1_y, ...]
+        pos = np.asarray([obs_row[0], obs_row[1]], dtype=np.float32)
+        vel = np.asarray([obs_row[2], obs_row[3]], dtype=np.float32)
+        rel_obs = np.asarray([obs_row[4], obs_row[5]], dtype=np.float32)
 
-        evade_vec = _normalize(np.asarray([dx, dy], dtype=np.float32))
-        inertia_vec = _normalize(np.asarray([vx, vy], dtype=np.float32))
-        blended = 0.85 * evade_vec + 0.15 * inertia_vec
+        evade = np.zeros(2, dtype=np.float32)
+        start = 6
+        while start + 1 < obs_row.size:
+            rel_p = np.asarray([obs_row[start], obs_row[start + 1]], dtype=np.float32)
+            # rel_p is pursuer-relative (pursuer - evader), so use negative for evasion.
+            evade += _safe_repulsion(rel_p, influence_radius=6.0, gain=1.35)
+            start += 2
+
+        obstacle_avoid = _safe_repulsion(rel_obs, influence_radius=2.8, gain=1.25)
+
+        wall = np.zeros(2, dtype=np.float32)
+        wall_margin = 1.7
+        half_extent = 10.0
+        if pos[0] > half_extent - wall_margin:
+            wall[0] -= (pos[0] - (half_extent - wall_margin)) / wall_margin
+        if pos[0] < -half_extent + wall_margin:
+            wall[0] += ((-half_extent + wall_margin) - pos[0]) / wall_margin
+        if pos[1] > half_extent - wall_margin:
+            wall[1] -= (pos[1] - (half_extent - wall_margin)) / wall_margin
+        if pos[1] < -half_extent + wall_margin:
+            wall[1] += ((-half_extent + wall_margin) - pos[1]) / wall_margin
+
+        damping = -0.18 * vel
+        blended = 1.2 * evade + obstacle_avoid + 0.95 * wall + damping
         if math.hypot(float(blended[0]), float(blended[1])) < 1e-6:
             return np.zeros(2, dtype=np.float32)
         return _normalize(blended)

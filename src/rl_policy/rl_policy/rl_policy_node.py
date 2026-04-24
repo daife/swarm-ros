@@ -11,6 +11,7 @@ import rclpy
 from geometry_msgs.msg import Accel
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import Bool, Float32MultiArray, Int32
 from visualization_msgs.msg import Marker, MarkerArray
 
@@ -305,10 +306,33 @@ class RLPolicyNode(Node):
         self.evader_actor_optim = torch.optim.Adam(self.evader_actor.parameters(), lr=evader_actor_lr)
         self.evader_critic_optim = torch.optim.Adam(self.evader_critic.parameters(), lr=evader_critic_lr)
 
-        if self.pursuer_algo == "maddpg" and self.pursuer_train_mode in {"train_load", "eval_only"} and self.pursuer_weights:
-            self._load_checkpoint(self.pursuer_weights)
-        if self.evader_algo == "ddpg" and self.evader_train_mode in {"train_load", "eval_only"} and self.evader_weights:
-            self._load_checkpoint(self.evader_weights)
+        pursuer_loaded = True
+        evader_loaded = True
+        if self.pursuer_algo == "maddpg" and self.pursuer_train_mode in {"train_load", "eval_only"}:
+            if self.pursuer_weights:
+                pursuer_loaded = self._load_checkpoint(self.pursuer_weights)
+            else:
+                pursuer_loaded = False
+
+        if self.evader_algo == "ddpg" and self.evader_train_mode in {"train_load", "eval_only"}:
+            if self.evader_weights:
+                evader_loaded = self._load_checkpoint(self.evader_weights)
+            else:
+                evader_loaded = False
+
+        if self.pursuer_algo == "maddpg" and self.pursuer_train_mode in {"train_load", "eval_only"} and not pursuer_loaded:
+            self.get_logger().warning(
+                "Pursuer checkpoint unavailable, fallback to flocking controller"
+            )
+            self.pursuer_algo = "flocking"
+            self.pursuer_training_enabled = False
+
+        if self.evader_algo == "ddpg" and self.evader_train_mode in {"train_load", "eval_only"} and not evader_loaded:
+            self.get_logger().warning(
+                "Evader checkpoint unavailable, fallback to flocking controller"
+            )
+            self.evader_algo = "flocking"
+            self.evader_training_enabled = False
 
         if self.pursuer_algo != "maddpg" and self.pursuer_weights:
             self.get_logger().warning(
@@ -385,17 +409,17 @@ class RLPolicyNode(Node):
 
         torch.save(payload, path)
 
-    def _load_checkpoint(self, path: str) -> None:
+    def _load_checkpoint(self, path: str) -> bool:
         if torch is None:
-            return
+            return False
         if not os.path.exists(path):
             self.get_logger().warning(f"Checkpoint not found: {path}")
-            return
+            return False
 
         payload = torch.load(path, map_location=self.device)
         if not isinstance(payload, dict):
             self.get_logger().warning(f"Unsupported checkpoint format: {path}")
-            return
+            return False
 
         # Backward compatibility with previous single-actor checkpoint format.
         if "actor_state_dict" in payload and self.pursuer_actors:
@@ -408,7 +432,7 @@ class RLPolicyNode(Node):
                 payload.get("best_episode_return", self.best_pursuer_return)
             )
             self.get_logger().info(f"Loaded legacy checkpoint: {path}")
-            return
+            return True
 
         if payload.get("pursuer_actor_state_dicts") and self.pursuer_actors:
             actor_states = payload["pursuer_actor_state_dicts"]
@@ -451,6 +475,7 @@ class RLPolicyNode(Node):
         self.best_pursuer_return = float(payload.get("best_pursuer_return", self.best_pursuer_return))
         self.best_evader_return = float(payload.get("best_evader_return", self.best_evader_return))
         self.get_logger().info(f"Loaded checkpoint: {path}")
+        return True
 
     def on_odom(self, agent_id: int, msg: Odometry) -> None:
         self.states[agent_id] = msg
