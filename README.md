@@ -1,5 +1,10 @@
 # game_of_drones_rl ROS 2 仿真与训练系统说明
 
+#使用符号链接构建，修改源码重启节点即可看到效果
+```
+colcon build --symlink-install  --base-paths src
+```
+
 本系统用于多无人机追捕-逃避博弈训练，默认使用 Gazebo Harmonic 真仿真后端。
 
 核心目标：
