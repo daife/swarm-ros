@@ -17,9 +17,11 @@ ARGS=(
   -p "pursuer_max_speed:=${GAZEBO_PURSUER_MAX_SPEED}"        # 可选: pursuer 速度上限
   -p "evader_max_speed:=${GAZEBO_EVADER_MAX_SPEED}"          # 可选: evader 速度上限
   -p "linear_drag:=${GAZEBO_LINEAR_DRAG}"                    # 可选: 线性阻尼
+  -p "collision_distance:=${COLLISION_DISTANCE}"             # 可选: 二维碰撞安全半径
   -p "control_requires_reset:=${GAZEBO_CONTROL_REQUIRES_RESET}" # 可选: 首次 reset 前禁止控制回写
   -p "world_half_extent:=${WORLD_HALF_EXTENT}"               # 可选: 位置边界裁剪半径
   -p "fixed_z:=${FIXED_Z}"                                   # 可选: 固定飞行高度
+  -p "agent_altitude_step:=${AGENT_ALTITUDE_STEP}"            # 可选: 不同无人机高度间隔
 )
 
 echo "[22_sim_bridge_node] start"

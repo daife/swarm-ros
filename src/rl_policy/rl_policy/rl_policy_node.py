@@ -1,4 +1,5 @@
 import copy
+import csv
 import math
 import os
 import random
@@ -78,6 +79,56 @@ class Critic(nn.Module):
         return self.net(x)
 
 
+class TargetPredictionNet(nn.Module):
+    def __init__(self, input_dim: int, hidden_dim: int, predict_steps: int) -> None:
+        super().__init__()
+        self.predict_steps = predict_steps
+        self.lstm = nn.LSTM(input_dim, hidden_dim, batch_first=True)
+        self.head = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, 2 * predict_steps),
+        )
+
+    def forward(self, history: torch.Tensor) -> torch.Tensor:
+        out, _ = self.lstm(history)
+        return self.head(out[:, -1, :])
+
+
+class CBCTPActor(nn.Module):
+    def __init__(self, token_dim: int, hidden_dim: int, action_dim: int = 2) -> None:
+        super().__init__()
+        self.encoder = nn.LSTM(token_dim, hidden_dim, batch_first=True, bidirectional=True)
+        self.head = nn.Sequential(
+            nn.Linear(2 * hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, action_dim),
+            nn.Tanh(),
+        )
+
+    def forward(self, tokens: torch.Tensor) -> torch.Tensor:
+        out, _ = self.encoder(tokens)
+        # The current agent is intentionally placed at both ends of the sequence.
+        current = 0.5 * (out[:, 0, :] + out[:, -1, :])
+        return self.head(current)
+
+
+class CBCTPCritic(nn.Module):
+    def __init__(self, token_dim: int, hidden_dim: int) -> None:
+        super().__init__()
+        self.encoder = nn.LSTM(token_dim, hidden_dim, batch_first=True, bidirectional=True)
+        self.head = nn.Sequential(
+            nn.Linear(2 * hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, 1),
+        )
+
+    def forward(self, tokens: torch.Tensor) -> torch.Tensor:
+        out, _ = self.encoder(tokens)
+        current = 0.5 * (out[:, 0, :] + out[:, -1, :])
+        return self.head(current)
+
+
 @dataclass
 class ObservationSnapshot:
     positions: np.ndarray
@@ -90,7 +141,7 @@ class RLPolicyNode(Node):
         super().__init__("rl_policy_node")
         self.declare_parameter("num_pursuers", 5)
         self.declare_parameter("num_evaders", 1)
-        self.declare_parameter("pursuer_algo", "maddpg")
+        self.declare_parameter("pursuer_algo", "cbc_tp_net")
         self.declare_parameter("pursuer_train_mode", "train_scratch")
         self.declare_parameter("pursuer_weights", "")
         self.declare_parameter("evader_algo", "ddpg")
@@ -98,25 +149,35 @@ class RLPolicyNode(Node):
         self.declare_parameter("evader_weights", "")
 
         self.declare_parameter("max_accel", 1.0)
-        self.declare_parameter("pursuer_max_accel", -1.0)
-        self.declare_parameter("evader_max_accel", -1.0)
+        self.declare_parameter("pursuer_max_accel", 1.2)
+        self.declare_parameter("evader_max_accel", 0.8)
         self.declare_parameter("capture_radius", 2.0)
-        self.declare_parameter("collision_penalty", -2.0)
-        self.declare_parameter("discount_gamma", 0.99)
+        self.declare_parameter("capture_required_pursuers", 3)
+        self.declare_parameter("collision_penalty", -10.0)
+        self.declare_parameter("discount_gamma", 0.95)
         self.declare_parameter("target_tau", 0.01)
-        self.declare_parameter("pursuer_actor_lr", 3e-4)
+        self.declare_parameter("pursuer_actor_lr", 1e-3)
         self.declare_parameter("pursuer_critic_lr", 1e-3)
-        self.declare_parameter("evader_actor_lr", 3e-4)
+        self.declare_parameter("evader_actor_lr", 1e-3)
         self.declare_parameter("evader_critic_lr", 1e-3)
-        self.declare_parameter("buffer_capacity", 200000)
-        self.declare_parameter("batch_size", 128)
+        self.declare_parameter("buffer_capacity", 1000000)
+        self.declare_parameter("batch_size", 512)
         self.declare_parameter("warmup_steps", 500)
         self.declare_parameter("train_updates_per_step", 1)
+        self.declare_parameter("train_every_steps", 50)
         self.declare_parameter("exploration_noise_std", 0.2)
         self.declare_parameter("policy_update_interval", 1)
-        self.declare_parameter("optimize_horizon_steps", 120)
+        self.declare_parameter("optimize_horizon_steps", 500)
+        self.declare_parameter("tp_history_steps", 10)
+        self.declare_parameter("tp_predict_steps", 3)
+        self.declare_parameter("tp_hidden_dim", 128)
+        self.declare_parameter("tp_lr", 1e-3)
+        self.declare_parameter("cbc_hidden_dim", 128)
+        self.declare_parameter("reward_safe_distance", 2.0)
+        self.declare_parameter("reward_normalization", 0.05)
         self.declare_parameter("checkpoint_dir", "artifacts/checkpoints")
         self.declare_parameter("checkpoint_prefix", "pursuer_policy")
+        self.declare_parameter("metrics_output_dir", "artifacts/metrics")
         self.declare_parameter("use_synthetic_obs_when_missing", True)
         self.declare_parameter("torch_device", "auto")
 
@@ -150,6 +211,9 @@ class RLPolicyNode(Node):
         # Collaborative: [rel_p_j(2), rvel_p_j(2), rel_obs_p_j(2), rel_target_p_j(2)] -> 8 * (num_p - 1)
         self.pursuer_obs_dim = 8 * self.num_pursuers
         self.global_state_dim = 4 * self.total_agents
+        self.cbc_feature_dim = 8
+        self.cbc_token_dim = self.cbc_feature_dim + 2
+        self.cbc_critic_token_dim = self.cbc_token_dim + 2
 
         for agent_id in range(self.total_agents):
             self.create_subscription(Odometry, f"/agent_{agent_id}/odom", partial(self.on_odom, agent_id), 10)
@@ -179,11 +243,24 @@ class RLPolicyNode(Node):
         self.episode_index = 0
         self.episode_return_p = 0.0
         self.episode_return_e = 0.0
+        self.latest_episode_steps = 0
         self.best_pursuer_return = float("-inf")
         self.best_evader_return = float("-inf")
+        self.metrics_dir = self._resolve_metrics_dir()
+        self.reward_metrics_path = os.path.join(self.metrics_dir, "reward_metrics.csv")
+        self._init_reward_metrics_file()
 
         capacity = self.get_parameter("buffer_capacity").get_parameter_value().integer_value
         self.replay = ReplayBuffer(capacity=max(1000, int(capacity)))
+        self.tp_replay = ReplayBuffer(capacity=max(1000, int(capacity)))
+        self.state_history: Deque[np.ndarray] = deque(
+            maxlen=max(
+                2,
+                self.get_parameter("tp_history_steps").get_parameter_value().integer_value
+                + self.get_parameter("tp_predict_steps").get_parameter_value().integer_value
+                + 1,
+            )
+        )
 
         self.prev_snapshot: Optional[Dict[str, np.ndarray]] = None
         self.step_counter_for_policy_delay = 0
@@ -251,6 +328,8 @@ class RLPolicyNode(Node):
             self.pursuer_target_critics = []
             self.pursuer_actor_optim = []
             self.pursuer_critic_optim = []
+            self.tp_net = None
+            self.tp_optim = None
             self.evader_actor = None
             self.evader_target_actor = None
             self.evader_critic = None
@@ -262,11 +341,7 @@ class RLPolicyNode(Node):
         self.pursuer_algo = self.pursuer_algo.strip().lower()
         self.evader_algo = self.evader_algo.strip().lower()
 
-        if self.pursuer_algo == "cbc_tp_net":
-            self.get_logger().warning("cbc_tp_net暂未实现，追捕者控制回退到flocking")
-            self.pursuer_algo = "flocking"
-
-        if self.pursuer_algo not in {"maddpg", "flocking"}:
+        if self.pursuer_algo not in {"maddpg", "cbc_tp_net", "flocking"}:
             self.get_logger().warning(f"Unknown pursuer_algo={self.pursuer_algo}, fallback to maddpg")
             self.pursuer_algo = "maddpg"
 
@@ -274,7 +349,7 @@ class RLPolicyNode(Node):
             self.get_logger().warning(f"Unknown evader_algo={self.evader_algo}, fallback to ddpg")
             self.evader_algo = "ddpg"
 
-        if self.pursuer_algo != "maddpg" and self.pursuer_training_enabled:
+        if self.pursuer_algo not in {"maddpg", "cbc_tp_net"} and self.pursuer_training_enabled:
             self.get_logger().warning(
                 f"pursuer_algo={self.pursuer_algo} 不支持参数训练，自动关闭 pursuer training"
             )
@@ -290,13 +365,30 @@ class RLPolicyNode(Node):
         pursuer_critic_lr = self.get_parameter("pursuer_critic_lr").get_parameter_value().double_value
         evader_actor_lr = self.get_parameter("evader_actor_lr").get_parameter_value().double_value
         evader_critic_lr = self.get_parameter("evader_critic_lr").get_parameter_value().double_value
+        tp_lr = self.get_parameter("tp_lr").get_parameter_value().double_value
+        tp_hidden_dim = self.get_parameter("tp_hidden_dim").get_parameter_value().integer_value
+        tp_predict_steps = self.get_parameter("tp_predict_steps").get_parameter_value().integer_value
+        cbc_hidden_dim = self.get_parameter("cbc_hidden_dim").get_parameter_value().integer_value
 
         joint_action_dim = 2 * self.num_pursuers
         critic_input_dim = self.global_state_dim + joint_action_dim
+        self.cbc_feature_dim = 8
+        self.cbc_token_dim = self.cbc_feature_dim + 2
+        self.cbc_critic_token_dim = self.cbc_token_dim + 2
 
-        self.pursuer_actors = [Actor(self.pursuer_obs_dim, 2).to(self.device) for _ in range(self.num_pursuers)]
+        if self.pursuer_algo == "cbc_tp_net":
+            self.pursuer_actors = [
+                CBCTPActor(self.cbc_token_dim, cbc_hidden_dim).to(self.device)
+                for _ in range(self.num_pursuers)
+            ]
+            self.pursuer_critics = [
+                CBCTPCritic(self.cbc_critic_token_dim, cbc_hidden_dim).to(self.device)
+                for _ in range(self.num_pursuers)
+            ]
+        else:
+            self.pursuer_actors = [Actor(self.pursuer_obs_dim, 2).to(self.device) for _ in range(self.num_pursuers)]
+            self.pursuer_critics = [Critic(critic_input_dim).to(self.device) for _ in range(self.num_pursuers)]
         self.pursuer_target_actors = [copy.deepcopy(actor) for actor in self.pursuer_actors]
-        self.pursuer_critics = [Critic(critic_input_dim).to(self.device) for _ in range(self.num_pursuers)]
         self.pursuer_target_critics = [copy.deepcopy(critic) for critic in self.pursuer_critics]
 
         self.pursuer_actor_optim = [
@@ -307,6 +399,12 @@ class RLPolicyNode(Node):
             torch.optim.Adam(critic.parameters(), lr=pursuer_critic_lr)
             for critic in self.pursuer_critics
         ]
+        self.tp_net = TargetPredictionNet(
+            input_dim=self.global_state_dim + 2,
+            hidden_dim=tp_hidden_dim,
+            predict_steps=max(1, int(tp_predict_steps)),
+        ).to(self.device)
+        self.tp_optim = torch.optim.Adam(self.tp_net.parameters(), lr=tp_lr)
 
         self.evader_actor = Actor(self.evader_obs_dim, 2).to(self.device)
         self.evader_target_actor = copy.deepcopy(self.evader_actor)
@@ -317,7 +415,7 @@ class RLPolicyNode(Node):
 
         pursuer_loaded = True
         evader_loaded = True
-        if self.pursuer_algo == "maddpg" and self.pursuer_train_mode in {"train_load", "eval_only"}:
+        if self.pursuer_algo in {"maddpg", "cbc_tp_net"} and self.pursuer_train_mode in {"train_load", "eval_only"}:
             if self.pursuer_weights:
                 pursuer_loaded = self._load_checkpoint(self.pursuer_weights)
             else:
@@ -329,7 +427,7 @@ class RLPolicyNode(Node):
             else:
                 evader_loaded = False
 
-        if self.pursuer_algo == "maddpg" and self.pursuer_train_mode in {"train_load", "eval_only"} and not pursuer_loaded:
+        if self.pursuer_algo in {"maddpg", "cbc_tp_net"} and self.pursuer_train_mode in {"train_load", "eval_only"} and not pursuer_loaded:
             self.get_logger().warning(
                 "Pursuer checkpoint unavailable, fallback to flocking controller"
             )
@@ -343,7 +441,7 @@ class RLPolicyNode(Node):
             self.evader_algo = "flocking"
             self.evader_training_enabled = False
 
-        if self.pursuer_algo != "maddpg" and self.pursuer_weights:
+        if self.pursuer_algo not in {"maddpg", "cbc_tp_net"} and self.pursuer_weights:
             self.get_logger().warning(
                 f"pursuer_algo={self.pursuer_algo} 不使用 pursuer_weights，已忽略"
             )
@@ -378,6 +476,30 @@ class RLPolicyNode(Node):
         os.makedirs(out_dir, exist_ok=True)
         return out_dir
 
+    def _resolve_metrics_dir(self) -> str:
+        raw_dir = self.get_parameter("metrics_output_dir").get_parameter_value().string_value
+        out_dir = raw_dir if os.path.isabs(raw_dir) else os.path.join(os.getcwd(), raw_dir)
+        os.makedirs(out_dir, exist_ok=True)
+        return out_dir
+
+    def _init_reward_metrics_file(self) -> None:
+        if os.path.exists(self.reward_metrics_path):
+            return
+        with open(self.reward_metrics_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(
+                [
+                    "episode",
+                    "steps",
+                    "done_reason",
+                    "pursuer_return",
+                    "evader_return",
+                    "pursuer_average_reward",
+                    "evader_average_reward",
+                    "replay_size",
+                ]
+            )
+
     def _checkpoint_paths(self) -> Tuple[str, str, str]:
         out_dir = self._resolve_checkpoint_dir()
         prefix = self.get_parameter("checkpoint_prefix").get_parameter_value().string_value
@@ -407,6 +529,10 @@ class RLPolicyNode(Node):
             payload["pursuer_target_critic_state_dicts"] = [m.state_dict() for m in self.pursuer_target_critics]
             payload["pursuer_actor_optim_state_dicts"] = [o.state_dict() for o in self.pursuer_actor_optim]
             payload["pursuer_critic_optim_state_dicts"] = [o.state_dict() for o in self.pursuer_critic_optim]
+
+        if self.tp_net is not None:
+            payload["tp_net_state_dict"] = self.tp_net.state_dict()
+            payload["tp_optim_state_dict"] = self.tp_optim.state_dict()
 
         if self.evader_actor is not None:
             payload["evader_actor_state_dict"] = self.evader_actor.state_dict()
@@ -464,6 +590,11 @@ class RLPolicyNode(Node):
             critic_optim_states = payload.get("pursuer_critic_optim_state_dicts", [])
             for optim, state in zip(self.pursuer_critic_optim, critic_optim_states):
                 optim.load_state_dict(state)
+
+        if payload.get("tp_net_state_dict") and self.tp_net is not None:
+            self.tp_net.load_state_dict(payload["tp_net_state_dict"])
+            if payload.get("tp_optim_state_dict") and self.tp_optim is not None:
+                self.tp_optim.load_state_dict(payload["tp_optim_state_dict"])
 
         if payload.get("evader_actor_state_dict") and self.evader_actor is not None:
             self.evader_actor.load_state_dict(payload["evader_actor_state_dict"])
@@ -574,6 +705,7 @@ class RLPolicyNode(Node):
     def _pause_for_reset(self) -> None:
         self.waiting_for_episode_start = True
         self.prev_snapshot = None
+        self.state_history.clear()
         self._publish_zero_actions()
 
     def on_reset_begin(self, msg: Int32) -> None:
@@ -620,6 +752,7 @@ class RLPolicyNode(Node):
 
     def on_episode_metrics(self, msg: Float32MultiArray) -> None:
         if len(msg.data) >= 3:
+            self.latest_episode_steps = int(msg.data[1])
             self.latest_done_reason = int(msg.data[2])
             self.done_latched = True
             self._pause_for_reset()
@@ -741,6 +874,91 @@ class RLPolicyNode(Node):
             return np.zeros((0, self.pursuer_obs_dim), dtype=np.float32)
         return np.asarray(obs_rows, dtype=np.float32)
 
+    def _tp_input_row(self, snapshot: ObservationSnapshot, global_state: np.ndarray) -> np.ndarray:
+        target_id = self.num_pursuers
+        return np.concatenate([snapshot.positions[target_id], global_state], axis=0).astype(np.float32)
+
+    def _record_tp_history(self, snapshot: ObservationSnapshot, global_state: np.ndarray) -> None:
+        self.state_history.append(self._tp_input_row(snapshot, global_state))
+
+        n = self.get_parameter("tp_history_steps").get_parameter_value().integer_value
+        k = self.get_parameter("tp_predict_steps").get_parameter_value().integer_value
+        if len(self.state_history) < n + k:
+            return
+
+        hist = list(self.state_history)
+        px = np.stack(hist[-(n + k) : -k], axis=0).astype(np.float32)
+        py = np.stack([row[:2] for row in hist[-k:]], axis=0).reshape(-1).astype(np.float32)
+        self.tp_replay.add({"tp_px": px, "tp_py": py})
+
+    def _target_prediction(self, snapshot: ObservationSnapshot, global_state: np.ndarray) -> np.ndarray:
+        target_id = self.num_pursuers
+        fallback = snapshot.positions[target_id].astype(np.float32)
+        if torch is None or self.tp_net is None:
+            return fallback
+
+        n = self.get_parameter("tp_history_steps").get_parameter_value().integer_value
+        if len(self.state_history) < n:
+            return fallback
+
+        history = np.stack(list(self.state_history)[-n:], axis=0).astype(np.float32)
+        history[-1] = self._tp_input_row(snapshot, global_state)
+        history_tensor = torch.tensor(history, dtype=torch.float32, device=self.device).unsqueeze(0)
+        with torch.no_grad():
+            pred = self.tp_net(history_tensor).reshape(1, -1, 2)[0, -1, :]
+        return pred.cpu().numpy().astype(np.float32)
+
+    def _build_cbc_actor_tokens(
+        self,
+        pursuer_obs: np.ndarray,
+        target_prediction: np.ndarray,
+    ) -> np.ndarray:
+        pursuer_obs = np.asarray(pursuer_obs, dtype=np.float32)
+        target_prediction = np.asarray(target_prediction, dtype=np.float32)
+        if pursuer_obs.ndim == 3:
+            return np.stack(
+                [
+                    self._build_cbc_actor_tokens(pursuer_obs[b], target_prediction[b])
+                    for b in range(pursuer_obs.shape[0])
+                ],
+                axis=0,
+            ).astype(np.float32)
+
+        token_rows = []
+        for i in range(self.num_pursuers):
+            row = pursuer_obs[i]
+            self_features = row[: self.cbc_feature_dim]
+            agent_pos = self_features[:2]
+            pred_rel = target_prediction - agent_pos
+            tokens = [np.concatenate([self_features, pred_rel], axis=0)]
+
+            start = self.cbc_feature_dim
+            while start + self.cbc_feature_dim <= row.size:
+                peer_features = row[start : start + self.cbc_feature_dim]
+                peer_pos = agent_pos + peer_features[:2]
+                peer_pred_rel = target_prediction - peer_pos
+                tokens.append(np.concatenate([peer_features, peer_pred_rel], axis=0))
+                start += self.cbc_feature_dim
+
+            tokens.append(tokens[0].copy())
+            token_rows.append(np.stack(tokens, axis=0))
+
+        if not token_rows:
+            return np.zeros((0, 0, self.cbc_token_dim), dtype=np.float32)
+        return np.stack(token_rows, axis=0).astype(np.float32)
+
+    def _cbc_critic_tokens_from_actor_tokens(
+        self,
+        actor_tokens: torch.Tensor,
+        joint_actions: torch.Tensor,
+        agent_idx: int,
+    ) -> torch.Tensor:
+        batch_size = actor_tokens.shape[0]
+        actions = joint_actions.reshape(batch_size, self.num_pursuers, 2)
+        order = [agent_idx] + [j for j in range(self.num_pursuers) if j != agent_idx] + [agent_idx]
+        action_tokens = actions[:, order, :]
+        return torch.cat([actor_tokens[:, agent_idx, :, :], action_tokens], dim=-1)
+
     def _build_evader_obs(self, snapshot: ObservationSnapshot) -> np.ndarray:
         obs_rows = []
         for eidx in range(self.num_evaders):
@@ -773,6 +991,30 @@ class RLPolicyNode(Node):
             action_tensor = self.pursuer_actors[idx](obs_tensor)
         return action_tensor.squeeze(0).cpu().numpy().astype(np.float32)
 
+    def _policy_cbc_tp_actions(
+        self,
+        pursuer_obs: np.ndarray,
+        target_prediction: np.ndarray,
+        training_enabled: bool,
+        noise_std: float,
+    ) -> np.ndarray:
+        if torch is None or self.pursuer_algo != "cbc_tp_net" or not self.pursuer_actors:
+            return np.zeros((self.num_pursuers, 2), dtype=np.float32)
+
+        actor_tokens_np = self._build_cbc_actor_tokens(pursuer_obs, target_prediction)
+        if actor_tokens_np.size == 0:
+            return np.zeros((0, 2), dtype=np.float32)
+
+        actor_tokens = torch.tensor(actor_tokens_np, dtype=torch.float32, device=self.device)
+        actions = []
+        with torch.no_grad():
+            for i, actor in enumerate(self.pursuer_actors):
+                action = actor(actor_tokens[i : i + 1]).squeeze(0).cpu().numpy().astype(np.float32)
+                if training_enabled and noise_std > 0.0:
+                    action = action + np.random.normal(0.0, noise_std, size=2).astype(np.float32)
+                actions.append(np.clip(action, -1.0, 1.0).astype(np.float32))
+        return np.asarray(actions, dtype=np.float32)
+
     def _forward_evader_ddpg_action(self, obs_row: np.ndarray) -> Optional[np.ndarray]:
         if torch is None or self.evader_algo != "ddpg" or self.evader_actor is None:
             return None
@@ -784,6 +1026,17 @@ class RLPolicyNode(Node):
 
     def _policy_pursuer_actions(self, pursuer_obs: np.ndarray) -> np.ndarray:
         noise_std = self.get_parameter("exploration_noise_std").get_parameter_value().double_value
+        if self.pursuer_algo == "cbc_tp_net":
+            target_prediction = getattr(self, "_latest_target_prediction", None)
+            if target_prediction is None:
+                target_prediction = np.zeros(2, dtype=np.float32)
+            return self._policy_cbc_tp_actions(
+                pursuer_obs,
+                np.asarray(target_prediction, dtype=np.float32),
+                self.pursuer_training_enabled,
+                float(noise_std),
+            )
+
         ctrl_input = ControllerInput(
             obs=pursuer_obs,
             training_enabled=self.pursuer_training_enabled,
@@ -816,18 +1069,26 @@ class RLPolicyNode(Node):
         cmd.linear.z = 0.0
         self.cmd_publishers[agent_id].publish(cmd)
 
-    def _compute_rewards(self) -> Tuple[np.ndarray, np.ndarray, bool]:
+    def _compute_rewards(self) -> Tuple[np.ndarray, np.ndarray, bool, bool]:
         collision_penalty = self.get_parameter("collision_penalty").get_parameter_value().double_value
         capture_radius = self.get_parameter("capture_radius").get_parameter_value().double_value
+        required_pursuers = self.get_parameter(
+            "capture_required_pursuers"
+        ).get_parameter_value().integer_value
+        safe_distance = self.get_parameter("reward_safe_distance").get_parameter_value().double_value
+        rho = self.get_parameter("reward_normalization").get_parameter_value().double_value
+        softplus_k = 1e-3
 
         pursuer_rewards = np.zeros(self.num_pursuers, dtype=np.float32)
         evader_rewards = np.zeros(self.num_evaders, dtype=np.float32)
         captured = False
+        collision_snapshot = {aid: bool(self.collision_flags.get(aid, False)) for aid in range(self.total_agents)}
 
         if self.num_pursuers == 0 or self.num_evaders == 0:
-            return pursuer_rewards, evader_rewards, captured
+            return pursuer_rewards, evader_rewards, captured, any(collision_snapshot.values())
 
-        distances: List[float] = []
+        pursuer_distance_rows: List[Tuple[int, float, float]] = []
+        evader_distance_rows: List[float] = []
         for pid in range(self.num_pursuers):
             pkin = self._agent_kinematics(pid)
             if pkin is None:
@@ -844,27 +1105,38 @@ class RLPolicyNode(Node):
                 if min_dist is None or d < min_dist:
                     min_dist = d
             if min_dist is not None:
-                distances.append(min_dist)
+                rel_obs = self._get_closest_obstacle_surface_rel((px, py))
+                obs_dist = math.hypot(rel_obs[0], rel_obs[1]) if rel_obs != (0.0, 0.0) else safe_distance
+                pursuer_distance_rows.append((pid, min_dist, obs_dist))
+                evader_distance_rows.append(min_dist)
 
-        if distances:
+        if pursuer_distance_rows:
+            distances = [dist for _, dist, _ in pursuer_distance_rows]
             mean_dist = float(sum(distances) / len(distances))
-            captured = min(distances) <= capture_radius
-            shared = -mean_dist + (5.0 if captured else 0.0)
-            pursuer_rewards[:] = shared
-            evader_rewards[:] = mean_dist - (5.0 if captured else 0.0)
+            capturing_pursuers = sum(1 for dist in distances if dist <= capture_radius)
+            captured = capturing_pursuers >= max(1, int(required_pursuers))
+            global_reward = -sum(0.1 * rho * d for d in distances)
+            for pid, dist, obs_dist in pursuer_distance_rows:
+                x = (safe_distance - obs_dist) / softplus_k
+                obstacle_term = softplus_k * (x if x > 50.0 else math.log1p(math.exp(x)))
+                self_reward = -(0.5 * rho * dist + obstacle_term)
+                pursuer_rewards[pid] = global_reward + self_reward + (5.0 if captured else 0.0)
+            evader_rewards[:] = rho * mean_dist - (5.0 if captured else 0.0)
 
-        for pid in range(self.num_pursuers):
-            if self.collision_flags.get(pid, False):
-                pursuer_rewards[pid] += float(collision_penalty)
-        for eidx in range(self.num_evaders):
-            eid = self.num_pursuers + eidx
-            if self.collision_flags.get(eid, False):
-                evader_rewards[eidx] += float(collision_penalty)
+        pursuer_collision = any(collision_snapshot.get(pid, False) for pid in range(self.num_pursuers))
+        evader_collision = any(
+            collision_snapshot.get(self.num_pursuers + eidx, False)
+            for eidx in range(self.num_evaders)
+        )
+        if pursuer_collision:
+            pursuer_rewards += float(collision_penalty)
+        if evader_collision:
+            evader_rewards += float(collision_penalty)
 
         for aid in range(self.total_agents):
             self.collision_flags[aid] = False
 
-        return pursuer_rewards, evader_rewards, captured
+        return pursuer_rewards, evader_rewards, captured, any(collision_snapshot.values())
 
     def _to_tensor(self, array: np.ndarray) -> torch.Tensor:
         return torch.tensor(array, dtype=torch.float32, device=self.device)
@@ -872,6 +1144,22 @@ class RLPolicyNode(Node):
     def _soft_update(self, src: nn.Module, dst: nn.Module, tau: float) -> None:
         for src_p, dst_p in zip(src.parameters(), dst.parameters()):
             dst_p.data.copy_(tau * src_p.data + (1.0 - tau) * dst_p.data)
+
+    def _train_tp_step(self, batch_size: int) -> None:
+        if torch is None or self.tp_net is None or self.tp_optim is None:
+            return
+        if len(self.tp_replay) < batch_size:
+            return
+
+        batch_np = self.tp_replay.sample(batch_size)
+        px = self._to_tensor(batch_np["tp_px"])
+        py = self._to_tensor(batch_np["tp_py"])
+        pred = self.tp_net(px)
+        loss = F.mse_loss(pred, py)
+        self.tp_optim.zero_grad()
+        loss.backward()
+        nn.utils.clip_grad_norm_(self.tp_net.parameters(), 5.0)
+        self.tp_optim.step()
 
     def _train_step(self) -> None:
         if torch is None:
@@ -881,6 +1169,8 @@ class RLPolicyNode(Node):
         warmup_steps = self.get_parameter("warmup_steps").get_parameter_value().integer_value
         if len(self.replay) < max(batch_size, warmup_steps):
             return
+
+        self._train_tp_step(batch_size)
 
         batch_np = self.replay.sample(batch_size)
         batch = {key: self._to_tensor(value) for key, value in batch_np.items()}
@@ -899,6 +1189,8 @@ class RLPolicyNode(Node):
         next_pursuer_obs = batch["next_pursuer_obs"]
         pursuer_actions = batch["pursuer_actions"].reshape(batch_size, -1)
         pursuer_rewards = batch["pursuer_rewards"]
+        target_prediction = batch.get("target_prediction")
+        next_target_prediction = batch.get("next_target_prediction")
 
         self.step_counter_for_policy_delay += 1
         policy_update_due = self.step_counter_for_policy_delay % max(1, policy_update_interval) == 0
@@ -932,6 +1224,65 @@ class RLPolicyNode(Node):
                     actor_joint[:, start : start + 2] = ai
                     actor_in = torch.cat([state, actor_joint], dim=-1)
                     actor_loss = -self.pursuer_critics[i](actor_in).mean()
+
+                    self.pursuer_actor_optim[i].zero_grad()
+                    actor_loss.backward()
+                    nn.utils.clip_grad_norm_(self.pursuer_actors[i].parameters(), 5.0)
+                    self.pursuer_actor_optim[i].step()
+
+                    self._soft_update(self.pursuer_actors[i], self.pursuer_target_actors[i], tau)
+                    self._soft_update(self.pursuer_critics[i], self.pursuer_target_critics[i], tau)
+
+        if (
+            self.pursuer_training_enabled
+            and self.pursuer_algo == "cbc_tp_net"
+            and self.num_pursuers > 0
+            and target_prediction is not None
+            and next_target_prediction is not None
+        ):
+            actor_tokens_np = self._build_cbc_actor_tokens(
+                batch_np["pursuer_obs"].reshape(batch_size, self.num_pursuers, self.pursuer_obs_dim),
+                batch_np["target_prediction"],
+            )
+            next_actor_tokens_np = self._build_cbc_actor_tokens(
+                batch_np["next_pursuer_obs"].reshape(batch_size, self.num_pursuers, self.pursuer_obs_dim),
+                batch_np["next_target_prediction"],
+            )
+            actor_tokens = self._to_tensor(actor_tokens_np)
+            next_actor_tokens = self._to_tensor(next_actor_tokens_np)
+
+            with torch.no_grad():
+                target_next_actions = []
+                for i in range(self.num_pursuers):
+                    target_next_actions.append(self.pursuer_target_actors[i](next_actor_tokens[:, i, :, :]))
+                target_next_actions_cat = torch.cat(target_next_actions, dim=-1)
+
+            for i in range(self.num_pursuers):
+                critic_tokens = self._cbc_critic_tokens_from_actor_tokens(actor_tokens, pursuer_actions, i)
+                q_value = self.pursuer_critics[i](critic_tokens).squeeze(-1)
+
+                with torch.no_grad():
+                    target_critic_tokens = self._cbc_critic_tokens_from_actor_tokens(
+                        next_actor_tokens,
+                        target_next_actions_cat,
+                        i,
+                    )
+                    target_q = self.pursuer_target_critics[i](target_critic_tokens).squeeze(-1)
+                    y = pursuer_rewards[:, i] + gamma * (1.0 - done) * target_q
+
+                critic_loss = F.mse_loss(q_value, y)
+                self.pursuer_critic_optim[i].zero_grad()
+                critic_loss.backward()
+                nn.utils.clip_grad_norm_(self.pursuer_critics[i].parameters(), 5.0)
+                self.pursuer_critic_optim[i].step()
+
+                if policy_update_due:
+                    actor_joint = pursuer_actions.clone()
+                    ai = self.pursuer_actors[i](actor_tokens[:, i, :, :])
+                    start = 2 * i
+                    actor_joint[:, start : start + 2] = ai
+                    actor_critic_tokens = self._cbc_critic_tokens_from_actor_tokens(actor_tokens, actor_joint, i)
+                    actor_loss = -self.pursuer_critics[i](actor_critic_tokens).mean()
 
                     self.pursuer_actor_optim[i].zero_grad()
                     actor_loss.backward()
@@ -977,6 +1328,24 @@ class RLPolicyNode(Node):
 
     def _finalize_episode(self) -> None:
         self.episode_index += 1
+        steps = max(1, int(self.latest_episode_steps or self.local_episode_step_count))
+        pursuer_average_reward = self.episode_return_p / float(steps)
+        evader_average_reward = self.episode_return_e / float(steps)
+
+        with open(self.reward_metrics_path, "a", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(
+                [
+                    self.episode_index,
+                    steps,
+                    self.latest_done_reason,
+                    self.episode_return_p,
+                    self.episode_return_e,
+                    pursuer_average_reward,
+                    evader_average_reward,
+                    len(self.replay),
+                ]
+            )
 
         latest_path, pursuer_best_path, evader_best_path = self._checkpoint_paths()
         if self.pursuer_training_enabled or self.evader_training_enabled:
@@ -991,10 +1360,15 @@ class RLPolicyNode(Node):
             self._save_checkpoint(evader_best_path)
 
         self.get_logger().info(
-            "Episode %d done reason=%d, pursuer_return=%.3f, evader_return=%.3f, replay=%d"
+            "[paper_reward] episode=%d steps=%d done_reason=%d "
+            "pursuer_avg_reward=%.4f evader_avg_reward=%.4f "
+            "pursuer_return=%.3f evader_return=%.3f replay=%d"
             % (
                 self.episode_index,
+                steps,
                 self.latest_done_reason,
+                pursuer_average_reward,
+                evader_average_reward,
                 self.episode_return_p,
                 self.episode_return_e,
                 len(self.replay),
@@ -1027,6 +1401,8 @@ class RLPolicyNode(Node):
         global_state = self._build_global_state(snapshot)
         pursuer_obs = self._build_pursuer_obs(snapshot)
         evader_obs = self._build_evader_obs(snapshot)
+        target_prediction = self._target_prediction(snapshot, global_state)
+        self._latest_target_prediction = target_prediction
 
         pursuer_actions = self._policy_pursuer_actions(pursuer_obs)
         evader_actions = self._policy_evader_actions(evader_obs)
@@ -1037,7 +1413,7 @@ class RLPolicyNode(Node):
             eid = self.num_pursuers + eidx
             self._publish_action(eid, evader_actions[eidx])
 
-        pursuer_rewards, evader_rewards, _captured = self._compute_rewards()
+        pursuer_rewards, evader_rewards, _captured, collision_terminal = self._compute_rewards()
 
         if self.prev_snapshot is not None:
             transition = {
@@ -1045,13 +1421,18 @@ class RLPolicyNode(Node):
                 "next_state": global_state,
                 "pursuer_obs": self.prev_snapshot["pursuer_obs"],
                 "next_pursuer_obs": pursuer_obs,
+                "target_prediction": self.prev_snapshot["target_prediction"],
+                "next_target_prediction": target_prediction,
                 "evader_obs": self.prev_snapshot["evader_obs"],
                 "next_evader_obs": evader_obs,
                 "pursuer_actions": self.prev_snapshot["pursuer_actions"],
                 "evader_action": self.prev_snapshot["evader_action"],
                 "pursuer_rewards": pursuer_rewards.astype(np.float32),
                 "evader_reward": np.asarray(evader_rewards[0] if len(evader_rewards) else 0.0, dtype=np.float32),
-                "done": np.asarray(1.0 if self.done_latched else 0.0, dtype=np.float32),
+                "done": np.asarray(
+                    1.0 if (self.done_latched or collision_terminal) else 0.0,
+                    dtype=np.float32,
+                ),
             }
             self.replay.add(transition)
             self.total_env_steps += 1
@@ -1060,9 +1441,11 @@ class RLPolicyNode(Node):
             self.episode_return_e += float(evader_rewards[0]) if len(evader_rewards) else 0.0
 
             if self.pursuer_training_enabled or self.evader_training_enabled:
-                updates = self.get_parameter("train_updates_per_step").get_parameter_value().integer_value
-                for _ in range(max(1, updates)):
-                    self._train_step()
+                train_every_steps = self.get_parameter("train_every_steps").get_parameter_value().integer_value
+                if self.total_env_steps % max(1, train_every_steps) == 0:
+                    updates = self.get_parameter("train_updates_per_step").get_parameter_value().integer_value
+                    for _ in range(max(1, updates)):
+                        self._train_step()
 
             horizon_steps = self.get_parameter("optimize_horizon_steps").get_parameter_value().integer_value
             if self.local_episode_step_count >= max(1, horizon_steps):
@@ -1072,12 +1455,14 @@ class RLPolicyNode(Node):
         self.prev_snapshot = {
             "state": global_state.astype(np.float32),
             "pursuer_obs": pursuer_obs.astype(np.float32),
+            "target_prediction": target_prediction.astype(np.float32),
             "evader_obs": evader_obs.astype(np.float32),
             "pursuer_actions": pursuer_actions.astype(np.float32),
             "evader_action": evader_actions[0].astype(np.float32)
             if len(evader_actions)
             else np.zeros(2, dtype=np.float32),
         }
+        self._record_tp_history(snapshot, global_state)
 
         if self.done_latched:
             self._finalize_episode()

@@ -38,13 +38,6 @@ def _create_bridge_process(context, *args, **kwargs):
         bridge_args.append(
             f"/model/{model_name}/odometry@nav_msgs/msg/Odometry@gz.msgs.Odometry"
         )
-        bridge_args.append(
-            f"/model/{model_name}/contacts@ros_gz_interfaces/msg/Contacts@gz.msgs.Contacts"
-        )
-        bridge_args.append(
-            f"/world/{world_name}/model/{model_name}/link/base_link/sensor/contact_sensor/contact"
-            "@ros_gz_interfaces/msg/Contacts@gz.msgs.Contacts"
-        )
 
     return [
         ExecuteProcess(
@@ -68,6 +61,7 @@ def generate_launch_description() -> LaunchDescription:
     seed_value = LaunchConfiguration("seed_value")
     collision_distance = LaunchConfiguration("collision_distance")
     capture_radius = LaunchConfiguration("capture_radius")
+    capture_required_pursuers = LaunchConfiguration("capture_required_pursuers")
     capture_steps = LaunchConfiguration("capture_steps")
     collision_penalty = LaunchConfiguration("collision_penalty")
     obstacle_density = LaunchConfiguration("obstacle_density")
@@ -78,10 +72,13 @@ def generate_launch_description() -> LaunchDescription:
     evader_train_mode = LaunchConfiguration("evader_train_mode")
     evader_weights = LaunchConfiguration("evader_weights")
     checkpoint_dir = LaunchConfiguration("checkpoint_dir")
+    metrics_output_dir = LaunchConfiguration("metrics_output_dir")
+    metrics_window_episodes = LaunchConfiguration("metrics_window_episodes")
     buffer_capacity = LaunchConfiguration("buffer_capacity")
     batch_size = LaunchConfiguration("batch_size")
     warmup_steps = LaunchConfiguration("warmup_steps")
     train_updates_per_step = LaunchConfiguration("train_updates_per_step")
+    train_every_steps = LaunchConfiguration("train_every_steps")
     discount_gamma = LaunchConfiguration("discount_gamma")
     target_tau = LaunchConfiguration("target_tau")
     pursuer_actor_lr = LaunchConfiguration("pursuer_actor_lr")
@@ -90,11 +87,24 @@ def generate_launch_description() -> LaunchDescription:
     evader_critic_lr = LaunchConfiguration("evader_critic_lr")
     exploration_noise_std = LaunchConfiguration("exploration_noise_std")
     policy_update_interval = LaunchConfiguration("policy_update_interval")
+    optimize_horizon_steps = LaunchConfiguration("optimize_horizon_steps")
+    tp_history_steps = LaunchConfiguration("tp_history_steps")
+    tp_predict_steps = LaunchConfiguration("tp_predict_steps")
+    tp_hidden_dim = LaunchConfiguration("tp_hidden_dim")
+    tp_lr = LaunchConfiguration("tp_lr")
+    cbc_hidden_dim = LaunchConfiguration("cbc_hidden_dim")
+    reward_safe_distance = LaunchConfiguration("reward_safe_distance")
+    reward_normalization = LaunchConfiguration("reward_normalization")
     use_synthetic_obs_when_missing = LaunchConfiguration("use_synthetic_obs_when_missing")
     torch_device = LaunchConfiguration("torch_device")
     world_half_extent = LaunchConfiguration("world_half_extent")
     spawn_half_extent = LaunchConfiguration("spawn_half_extent")
     spawn_attempts = LaunchConfiguration("spawn_attempts")
+    agent_altitude_step = LaunchConfiguration("agent_altitude_step")
+    paper_spawn_layout = LaunchConfiguration("paper_spawn_layout")
+    target_spawn_half_extent = LaunchConfiguration("target_spawn_half_extent")
+    pursuer_edge_band = LaunchConfiguration("pursuer_edge_band")
+    ignore_same_role_spawn_clearance = LaunchConfiguration("ignore_same_role_spawn_clearance")
     pursuer_max_accel = LaunchConfiguration("pursuer_max_accel")
     evader_max_accel = LaunchConfiguration("evader_max_accel")
     max_accel = LaunchConfiguration("max_accel")
@@ -139,45 +149,62 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("world_sdf", default_value=default_world_path),
             DeclareLaunchArgument("num_pursuers", default_value="5"),
             DeclareLaunchArgument("num_evaders", default_value="1"),
-            DeclareLaunchArgument("max_episodes", default_value="60"),
-            DeclareLaunchArgument("max_steps", default_value="120"),
+            DeclareLaunchArgument("max_episodes", default_value="4000"),
+            DeclareLaunchArgument("max_steps", default_value="500"),
             DeclareLaunchArgument("reset_policy", default_value="2"),
-            DeclareLaunchArgument("world_mode", default_value="random"),
-            DeclareLaunchArgument("seed_mode", default_value="none"),
+            DeclareLaunchArgument("world_mode", default_value="none"),
+            DeclareLaunchArgument("seed_mode", default_value="single"),
             DeclareLaunchArgument("seed_value", default_value="42"),
             DeclareLaunchArgument("collision_distance", default_value="0.8"),
             DeclareLaunchArgument("capture_radius", default_value="2.0"),
+            DeclareLaunchArgument("capture_required_pursuers", default_value="3"),
             DeclareLaunchArgument("capture_steps", default_value="5"),
-            DeclareLaunchArgument("collision_penalty", default_value="-2.0"),
-            DeclareLaunchArgument("obstacle_density", default_value="0.3"),
-            DeclareLaunchArgument("pursuer_algo", default_value="maddpg"),
+            DeclareLaunchArgument("collision_penalty", default_value="-10.0"),
+            DeclareLaunchArgument("obstacle_density", default_value="0.0"),
+            DeclareLaunchArgument("pursuer_algo", default_value="cbc_tp_net"),
             DeclareLaunchArgument("pursuer_train_mode", default_value="train_scratch"),
             DeclareLaunchArgument("pursuer_weights", default_value=""),
             DeclareLaunchArgument("evader_algo", default_value="ddpg"),
             DeclareLaunchArgument("evader_train_mode", default_value="eval_only"),
             DeclareLaunchArgument("evader_weights", default_value=""),
             DeclareLaunchArgument("max_accel", default_value="1.0"),
-            DeclareLaunchArgument("pursuer_max_accel", default_value="-1.0"),
-            DeclareLaunchArgument("evader_max_accel", default_value="-1.0"),
+            DeclareLaunchArgument("pursuer_max_accel", default_value="1.2"),
+            DeclareLaunchArgument("evader_max_accel", default_value="0.8"),
             DeclareLaunchArgument("checkpoint_dir", default_value="artifacts/checkpoints"),
             DeclareLaunchArgument("checkpoint_prefix", default_value="pursuer_policy"),
-            DeclareLaunchArgument("buffer_capacity", default_value="200000"),
-            DeclareLaunchArgument("batch_size", default_value="128"),
+            DeclareLaunchArgument("metrics_output_dir", default_value="artifacts/metrics"),
+            DeclareLaunchArgument("metrics_window_episodes", default_value="100"),
+            DeclareLaunchArgument("buffer_capacity", default_value="1000000"),
+            DeclareLaunchArgument("batch_size", default_value="512"),
             DeclareLaunchArgument("warmup_steps", default_value="500"),
             DeclareLaunchArgument("train_updates_per_step", default_value="1"),
-            DeclareLaunchArgument("discount_gamma", default_value="0.99"),
+            DeclareLaunchArgument("train_every_steps", default_value="50"),
+            DeclareLaunchArgument("discount_gamma", default_value="0.95"),
             DeclareLaunchArgument("target_tau", default_value="0.01"),
-            DeclareLaunchArgument("pursuer_actor_lr", default_value="0.0003"),
+            DeclareLaunchArgument("pursuer_actor_lr", default_value="0.001"),
             DeclareLaunchArgument("pursuer_critic_lr", default_value="0.001"),
-            DeclareLaunchArgument("evader_actor_lr", default_value="0.0003"),
+            DeclareLaunchArgument("evader_actor_lr", default_value="0.001"),
             DeclareLaunchArgument("evader_critic_lr", default_value="0.001"),
             DeclareLaunchArgument("exploration_noise_std", default_value="0.2"),
             DeclareLaunchArgument("policy_update_interval", default_value="1"),
+            DeclareLaunchArgument("optimize_horizon_steps", default_value="500"),
+            DeclareLaunchArgument("tp_history_steps", default_value="10"),
+            DeclareLaunchArgument("tp_predict_steps", default_value="3"),
+            DeclareLaunchArgument("tp_hidden_dim", default_value="128"),
+            DeclareLaunchArgument("tp_lr", default_value="0.001"),
+            DeclareLaunchArgument("cbc_hidden_dim", default_value="128"),
+            DeclareLaunchArgument("reward_safe_distance", default_value="2.0"),
+            DeclareLaunchArgument("reward_normalization", default_value="0.05"),
             DeclareLaunchArgument("use_synthetic_obs_when_missing", default_value="true"),
             DeclareLaunchArgument("torch_device", default_value="auto"),
-            DeclareLaunchArgument("world_half_extent", default_value="10.0"),
-            DeclareLaunchArgument("spawn_half_extent", default_value="9.0"),
+            DeclareLaunchArgument("world_half_extent", default_value="7.0"),
+            DeclareLaunchArgument("spawn_half_extent", default_value="6.5"),
             DeclareLaunchArgument("spawn_attempts", default_value="300"),
+            DeclareLaunchArgument("agent_altitude_step", default_value="0.35"),
+            DeclareLaunchArgument("paper_spawn_layout", default_value="true"),
+            DeclareLaunchArgument("target_spawn_half_extent", default_value="2.0"),
+            DeclareLaunchArgument("pursuer_edge_band", default_value="2.0"),
+            DeclareLaunchArgument("ignore_same_role_spawn_clearance", default_value="true"),
             DeclareLaunchArgument("obstacle_model_package", default_value="swarm_bringup"),
             DeclareLaunchArgument("obstacle_pool_box", default_value="8"),
             DeclareLaunchArgument("obstacle_pool_rect", default_value="8"),
@@ -196,13 +223,13 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("gazebo_controller_enabled", default_value="true"),
             DeclareLaunchArgument("gazebo_controller_dt", default_value="0.02"),
             DeclareLaunchArgument("gazebo_max_speed", default_value="3.0"),
-            DeclareLaunchArgument("gazebo_pursuer_max_speed", default_value="-1.0"),
-            DeclareLaunchArgument("gazebo_evader_max_speed", default_value="-1.0"),
+            DeclareLaunchArgument("gazebo_pursuer_max_speed", default_value="2.5"),
+            DeclareLaunchArgument("gazebo_evader_max_speed", default_value="3.0"),
             DeclareLaunchArgument("gazebo_linear_drag", default_value="0.15"),
             DeclareLaunchArgument("gazebo_control_requires_reset", default_value="true"),
             DeclareLaunchArgument("fixed_z", default_value="1.0"),
             DeclareLaunchArgument("initial_reset_delay_sec", default_value="5.0"),
-            DeclareLaunchArgument("always_reset_world", default_value="true"),
+            DeclareLaunchArgument("always_reset_world", default_value="false"),
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(gz_launch_file),
                 launch_arguments={
@@ -271,6 +298,17 @@ def generate_launch_description() -> LaunchDescription:
                         "spawn_attempts": ParameterValue(spawn_attempts, value_type=int),
                         "world_half_extent": ParameterValue(world_half_extent, value_type=float),
                         "spawn_z": ParameterValue(fixed_z, value_type=float),
+                        "agent_altitude_step": ParameterValue(agent_altitude_step, value_type=float),
+                        "paper_spawn_layout": ParameterValue(paper_spawn_layout, value_type=bool),
+                        "target_spawn_half_extent": ParameterValue(
+                            target_spawn_half_extent,
+                            value_type=float,
+                        ),
+                        "pursuer_edge_band": ParameterValue(pursuer_edge_band, value_type=float),
+                        "ignore_same_role_spawn_clearance": ParameterValue(
+                            ignore_same_role_spawn_clearance,
+                            value_type=bool,
+                        ),
                         "world_name": world_name,
                         "pursuer_name_prefix": pursuer_name_prefix,
                         "evader_name_prefix": evader_name_prefix,
@@ -299,12 +337,14 @@ def generate_launch_description() -> LaunchDescription:
                         "pursuer_max_speed": ParameterValue(gazebo_pursuer_max_speed, value_type=float),
                         "evader_max_speed": ParameterValue(gazebo_evader_max_speed, value_type=float),
                         "linear_drag": ParameterValue(gazebo_linear_drag, value_type=float),
+                        "collision_distance": ParameterValue(collision_distance, value_type=float),
                         "control_requires_reset": ParameterValue(
                             gazebo_control_requires_reset,
                             value_type=bool,
                         ),
                         "world_half_extent": ParameterValue(world_half_extent, value_type=float),
                         "fixed_z": ParameterValue(fixed_z, value_type=float),
+                        "agent_altitude_step": ParameterValue(agent_altitude_step, value_type=float),
                     }
                 ],
             ),
@@ -327,6 +367,10 @@ def generate_launch_description() -> LaunchDescription:
                         "pursuer_max_accel": ParameterValue(pursuer_max_accel, value_type=float),
                         "evader_max_accel": ParameterValue(evader_max_accel, value_type=float),
                         "capture_radius": ParameterValue(capture_radius, value_type=float),
+                        "capture_required_pursuers": ParameterValue(
+                            capture_required_pursuers,
+                            value_type=int,
+                        ),
                         "collision_penalty": ParameterValue(collision_penalty, value_type=float),
                         "discount_gamma": ParameterValue(discount_gamma, value_type=float),
                         "target_tau": ParameterValue(target_tau, value_type=float),
@@ -338,8 +382,17 @@ def generate_launch_description() -> LaunchDescription:
                         "batch_size": ParameterValue(batch_size, value_type=int),
                         "warmup_steps": ParameterValue(warmup_steps, value_type=int),
                         "train_updates_per_step": ParameterValue(train_updates_per_step, value_type=int),
+                        "train_every_steps": ParameterValue(train_every_steps, value_type=int),
                         "exploration_noise_std": ParameterValue(exploration_noise_std, value_type=float),
                         "policy_update_interval": ParameterValue(policy_update_interval, value_type=int),
+                        "optimize_horizon_steps": ParameterValue(optimize_horizon_steps, value_type=int),
+                        "tp_history_steps": ParameterValue(tp_history_steps, value_type=int),
+                        "tp_predict_steps": ParameterValue(tp_predict_steps, value_type=int),
+                        "tp_hidden_dim": ParameterValue(tp_hidden_dim, value_type=int),
+                        "tp_lr": ParameterValue(tp_lr, value_type=float),
+                        "cbc_hidden_dim": ParameterValue(cbc_hidden_dim, value_type=int),
+                        "reward_safe_distance": ParameterValue(reward_safe_distance, value_type=float),
+                        "reward_normalization": ParameterValue(reward_normalization, value_type=float),
                         "use_synthetic_obs_when_missing": ParameterValue(
                             use_synthetic_obs_when_missing,
                             value_type=bool,
@@ -347,6 +400,7 @@ def generate_launch_description() -> LaunchDescription:
                         "torch_device": torch_device,
                         "checkpoint_dir": checkpoint_dir,
                         "checkpoint_prefix": checkpoint_prefix,
+                        "metrics_output_dir": metrics_output_dir,
                     }
                 ],
             ),
@@ -364,12 +418,21 @@ def generate_launch_description() -> LaunchDescription:
                         "reset_policy": ParameterValue(reset_policy, value_type=int),
                         "collision_penalty": ParameterValue(collision_penalty, value_type=float),
                         "capture_radius": ParameterValue(capture_radius, value_type=float),
+                        "capture_required_pursuers": ParameterValue(
+                            capture_required_pursuers,
+                            value_type=int,
+                        ),
                         "capture_steps": ParameterValue(capture_steps, value_type=int),
                         "initial_reset_delay_sec": ParameterValue(
                             initial_reset_delay_sec,
                             value_type=float,
                         ),
                         "always_reset_world": ParameterValue(always_reset_world, value_type=bool),
+                        "metrics_output_dir": metrics_output_dir,
+                        "metrics_window_episodes": ParameterValue(
+                            metrics_window_episodes,
+                            value_type=int,
+                        ),
                     }
                 ],
             ),

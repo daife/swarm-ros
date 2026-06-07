@@ -25,12 +25,12 @@ class ObstacleSpec:
 class WorldManagerNode(Node):
     def __init__(self) -> None:
         super().__init__("world_manager_node")
-        self.declare_parameter("world_mode", "random")
-        self.declare_parameter("seed_mode", "none")
+        self.declare_parameter("world_mode", "none")
+        self.declare_parameter("seed_mode", "single")
         self.declare_parameter("seed_value", 42)
         self.declare_parameter("seed_sequence", [42, 43, 44, 45])
-        self.declare_parameter("obstacle_density", 0.3)
-        self.declare_parameter("world_half_extent", 10.0)
+        self.declare_parameter("obstacle_density", 0.0)
+        self.declare_parameter("world_half_extent", 7.0)
         self.declare_parameter("world_name", "urban")
         self.declare_parameter("obstacle_model_package", "swarm_bringup")
         self.declare_parameter("obstacle_pool_box", 8)
@@ -132,8 +132,14 @@ class WorldManagerNode(Node):
         return pool
 
     def _target_count(self) -> int:
+        world_mode = self.get_parameter("world_mode").get_parameter_value().string_value
+        if world_mode.strip().lower() in {"none", "empty", "no_obstacles"}:
+            return 0
+
         density = self.get_parameter("obstacle_density").get_parameter_value().double_value
         density = max(0.0, min(1.0, density))
+        if density <= 0.0:
+            return 0
         base = max(1, int(round(max(1, len(self._pool)) * density)))
         return base
 
@@ -311,6 +317,8 @@ class WorldManagerNode(Node):
             random.seed()
 
         chosen = self._pool[:target]
+        if target <= 0:
+            return []
         if world_mode == "fixed":
             return self._sample_fixed_layout(chosen)
         return self._sample_random_layout(chosen)
@@ -395,12 +403,38 @@ class WorldManagerNode(Node):
         return ready_obstacles
 
     def _process_pending_reset(self) -> None:
+        target_count = self._target_count()
+        if target_count <= 0:
+            if not self._published_empty_once:
+                self._publish_obstacles([])
+                self._published_empty_once = True
+
+            if not self._reset_pending:
+                return
+
+            for idx, spec in enumerate(self._pool):
+                if not self._spawned.get(spec.name, False):
+                    continue
+                self._set_pose(spec.name, self._staging_pose(idx, spec.size_z))
+
+            self._last_obstacles = []
+            self._publish_obstacles([])
+            self._publish_obstacles_reset_id(self._pending_reset_id)
+            self._reset_pending = False
+            done_msg = Int32()
+            done_msg.data = int(self._pending_reset_id)
+            self.reset_done_pub.publish(done_msg)
+            self.get_logger().info(
+                f"World reset complete: reset_id={self._pending_reset_id}, no active obstacles"
+            )
+            return
+
         ready_count = 0
         for spec in self._pool:
             if self._request_spawn_if_needed(spec):
                 ready_count += 1
 
-        if not self._pool_initialized and ready_count >= max(1, self._target_count()):
+        if not self._pool_initialized and ready_count >= max(1, target_count):
             self._pool_initialized = True
             self.get_logger().info(
                 f"Obstacle pool ready for reset: {ready_count}/{len(self._pool)} available"

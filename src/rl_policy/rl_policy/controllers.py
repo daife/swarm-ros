@@ -94,7 +94,7 @@ class PursuerController:
         # Soft wall repulsion using known map scale from defaults ([-10, 10] region).
         wall = np.zeros(2, dtype=np.float32)
         wall_margin = 1.6
-        half_extent = 10.0
+        half_extent = 7.0
         if pos[0] > half_extent - wall_margin:
             wall[0] -= (pos[0] - (half_extent - wall_margin)) / wall_margin
         if pos[0] < -half_extent + wall_margin:
@@ -179,7 +179,7 @@ class EvaderController:
 
         wall = np.zeros(2, dtype=np.float32)
         wall_margin = 1.7
-        half_extent = 10.0
+        half_extent = 7.0
         if pos[0] > half_extent - wall_margin:
             wall[0] -= (pos[0] - (half_extent - wall_margin)) / wall_margin
         if pos[0] < -half_extent + wall_margin:

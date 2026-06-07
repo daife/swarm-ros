@@ -45,13 +45,13 @@
 
     <model name="boundary_north">
       <static>true</static>
-      <pose>0 10.1 1.1 0 0 0</pose>
+      <pose>0 7.1 1.1 0 0 0</pose>
       <link name="link">
         <collision name="collision">
-          <geometry><box><size>20.2 0.2 2.2</size></box></geometry>
+            <geometry><box><size>14.2 0.2 2.2</size></box></geometry>
         </collision>
         <visual name="visual">
-          <geometry><box><size>20.2 0.2 2.2</size></box></geometry>
+          <geometry><box><size>14.2 0.2 2.2</size></box></geometry>
           <material><ambient>0.38 0.38 0.44 0.35</ambient><diffuse>0.38 0.38 0.44 0.35</diffuse></material>
         </visual>
       </link>
@@ -59,13 +59,13 @@
 
     <model name="boundary_south">
       <static>true</static>
-      <pose>0 -10.1 1.1 0 0 0</pose>
+      <pose>0 -7.1 1.1 0 0 0</pose>
       <link name="link">
         <collision name="collision">
-          <geometry><box><size>20.2 0.2 2.2</size></box></geometry>
+            <geometry><box><size>14.2 0.2 2.2</size></box></geometry>
         </collision>
         <visual name="visual">
-          <geometry><box><size>20.2 0.2 2.2</size></box></geometry>
+          <geometry><box><size>14.2 0.2 2.2</size></box></geometry>
           <material><ambient>0.38 0.38 0.44 0.35</ambient><diffuse>0.38 0.38 0.44 0.35</diffuse></material>
         </visual>
       </link>
@@ -73,13 +73,13 @@
 
     <model name="boundary_east">
       <static>true</static>
-      <pose>10.1 0 1.1 0 0 0</pose>
+      <pose>7.1 0 1.1 0 0 0</pose>
       <link name="link">
         <collision name="collision">
-          <geometry><box><size>0.2 20.2 2.2</size></box></geometry>
+            <geometry><box><size>0.2 14.2 2.2</size></box></geometry>
         </collision>
         <visual name="visual">
-          <geometry><box><size>0.2 20.2 2.2</size></box></geometry>
+          <geometry><box><size>0.2 14.2 2.2</size></box></geometry>
           <material><ambient>0.38 0.38 0.44 0.35</ambient><diffuse>0.38 0.38 0.44 0.35</diffuse></material>
         </visual>
       </link>
@@ -87,13 +87,13 @@
 
     <model name="boundary_west">
       <static>true</static>
-      <pose>-10.1 0 1.1 0 0 0</pose>
+      <pose>-7.1 0 1.1 0 0 0</pose>
       <link name="link">
         <collision name="collision">
-          <geometry><box><size>0.2 20.2 2.2</size></box></geometry>
+            <geometry><box><size>0.2 14.2 2.2</size></box></geometry>
         </collision>
         <visual name="visual">
-          <geometry><box><size>0.2 20.2 2.2</size></box></geometry>
+          <geometry><box><size>0.2 14.2 2.2</size></box></geometry>
           <material><ambient>0.38 0.38 0.44 0.35</ambient><diffuse>0.38 0.38 0.44 0.35</diffuse></material>
         </visual>
       </link>

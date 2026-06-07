@@ -19,10 +19,15 @@ class AgentManagerNode(Node):
 		self.declare_parameter("num_evaders", 1)
 		self.declare_parameter("collision_distance", 0.8)
 		self.declare_parameter("capture_radius", 2.0)
-		self.declare_parameter("world_half_extent", 10.0)
-		self.declare_parameter("spawn_half_extent", 9.0)
+		self.declare_parameter("world_half_extent", 7.0)
+		self.declare_parameter("spawn_half_extent", 6.5)
 		self.declare_parameter("spawn_attempts", 300)
 		self.declare_parameter("spawn_z", 0.7)
+		self.declare_parameter("agent_altitude_step", 0.35)
+		self.declare_parameter("paper_spawn_layout", True)
+		self.declare_parameter("target_spawn_half_extent", 2.0)
+		self.declare_parameter("pursuer_edge_band", 2.0)
+		self.declare_parameter("ignore_same_role_spawn_clearance", True)
 		self.declare_parameter("world_name", "urban")
 		self.declare_parameter("pursuer_name_prefix", "pursuer")
 		self.declare_parameter("evader_name_prefix", "evader")
@@ -61,10 +66,14 @@ class AgentManagerNode(Node):
 		self.num_evaders = self.get_parameter("num_evaders").get_parameter_value().integer_value
 		self.total_agents = self.num_pursuers + self.num_evaders
 		self.spawn_z = self.get_parameter("spawn_z").get_parameter_value().double_value
+		self.agent_altitude_step = self.get_parameter("agent_altitude_step").get_parameter_value().double_value
 
 		self.agent_model_names = self._build_agent_model_names()
 		self.agent_specs = self._build_agent_specs()
 		self.create_timer(0.1, self._process_pending_work)
+
+	def _agent_z(self, agent_id: int) -> float:
+		return self.spawn_z + float(agent_id) * max(0.0, self.agent_altitude_step)
 
 	def _build_agent_model_names(self) -> List[str]:
 		pursuer_prefix = self.get_parameter("pursuer_name_prefix").get_parameter_value().string_value
@@ -145,7 +154,7 @@ class AgentManagerNode(Node):
 		pose = Pose()
 		pose.position.x = staging_x + col * stride
 		pose.position.y = staging_y + row * stride
-		pose.position.z = self.spawn_z
+		pose.position.z = self._agent_z(idx)
 		pose.orientation.w = 1.0
 		return pose
 
@@ -211,7 +220,7 @@ class AgentManagerNode(Node):
 				radius = max(sx, sy) / 2.0
 				center_dist = math.hypot(x - ox, y - oy)
 				surface_dist = center_dist - radius
-				if surface_dist < collision_distance:
+				if surface_dist <= collision_distance:
 					return False
 			else:
 				half_x = sx / 2.0
@@ -219,7 +228,7 @@ class AgentManagerNode(Node):
 				dx = max(abs(x - ox) - half_x, 0.0)
 				dy = max(abs(y - oy) - half_y, 0.0)
 				surface_dist = math.hypot(dx, dy)
-				if surface_dist < collision_distance:
+				if surface_dist <= collision_distance:
 					return False
 		return True
 
@@ -235,10 +244,13 @@ class AgentManagerNode(Node):
 
 		for other_id, (ox, oy) in placed.items():
 			d = math.hypot(x - ox, y - oy)
-			if d < collision_distance:
-				return False
 
 			is_cross_role = self._is_pursuer(agent_id) != self._is_pursuer(other_id)
+			ignore_same_role = self.get_parameter(
+				"ignore_same_role_spawn_clearance"
+			).get_parameter_value().bool_value
+			if not is_cross_role and not ignore_same_role and d <= collision_distance:
+				return False
 			if is_cross_role and d <= (capture_radius + collision_distance):
 				return False
 		return True
@@ -246,7 +258,7 @@ class AgentManagerNode(Node):
 	def _boundary_ok(self, x: float, y: float, collision_distance: float) -> bool:
 		world_half_extent = self.get_parameter("world_half_extent").get_parameter_value().double_value
 		margin = max(0.0, world_half_extent - collision_distance)
-		return abs(x) <= margin and abs(y) <= margin
+		return abs(x) < margin and abs(y) < margin
 
 	def _sample_safe_pose(
 		self,
@@ -259,19 +271,50 @@ class AgentManagerNode(Node):
 		attempts = self.get_parameter("spawn_attempts").get_parameter_value().integer_value
 
 		sample_half_extent = min(spawn_half_extent, max(0.1, world_half_extent - collision_distance))
+		paper_spawn_layout = self.get_parameter("paper_spawn_layout").get_parameter_value().bool_value
+		target_spawn_half_extent = min(
+			self.get_parameter("target_spawn_half_extent").get_parameter_value().double_value,
+			sample_half_extent,
+		)
+		pursuer_edge_band = max(
+			0.1,
+			self.get_parameter("pursuer_edge_band").get_parameter_value().double_value,
+		)
 
 		def _build_pose(x: float, y: float, yaw: float) -> Pose:
 			pose = Pose()
 			pose.position.x = x
 			pose.position.y = y
-			pose.position.z = self.spawn_z
+			pose.position.z = self._agent_z(agent_id)
 			pose.orientation.z = math.sin(yaw / 2.0)
 			pose.orientation.w = math.cos(yaw / 2.0)
 			return pose
 
+		def _sample_xy() -> Tuple[float, float]:
+			if not paper_spawn_layout:
+				return (
+					random.uniform(-sample_half_extent, sample_half_extent),
+					random.uniform(-sample_half_extent, sample_half_extent),
+				)
+
+			if not self._is_pursuer(agent_id):
+				return (
+					random.uniform(-target_spawn_half_extent, target_spawn_half_extent),
+					random.uniform(-target_spawn_half_extent, target_spawn_half_extent),
+				)
+
+			inner = max(0.0, sample_half_extent - pursuer_edge_band)
+			side = random.choice(("left", "right", "bottom", "top"))
+			if side == "left":
+				return random.uniform(-sample_half_extent, -inner), random.uniform(-sample_half_extent, sample_half_extent)
+			if side == "right":
+				return random.uniform(inner, sample_half_extent), random.uniform(-sample_half_extent, sample_half_extent)
+			if side == "bottom":
+				return random.uniform(-sample_half_extent, sample_half_extent), random.uniform(-sample_half_extent, -inner)
+			return random.uniform(-sample_half_extent, sample_half_extent), random.uniform(inner, sample_half_extent)
+
 		for _ in range(max(1, attempts)):
-			x = random.uniform(-sample_half_extent, sample_half_extent)
-			y = random.uniform(-sample_half_extent, sample_half_extent)
+			x, y = _sample_xy()
 			yaw = random.uniform(-math.pi, math.pi)
 
 			if not self._boundary_ok(x, y, collision_distance):
@@ -390,8 +433,8 @@ class AgentManagerNode(Node):
 		future.add_done_callback(_on_done)
 
 	def _apply_pose_set(self, poses: List[Pose]) -> None:
-		for model_name, pose in zip(self.agent_model_names, poses):
-			pose.position.z = self.spawn_z
+		for agent_id, (model_name, pose) in enumerate(zip(self.agent_model_names, poses)):
+			pose.position.z = self._agent_z(agent_id)
 			self._call_set_pose(model_name, pose)
 
 		debug_msg = PoseArray()

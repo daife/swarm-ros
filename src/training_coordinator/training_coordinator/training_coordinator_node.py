@@ -1,6 +1,9 @@
+import csv
 import math
+import os
+from collections import deque
 from functools import partial
-from typing import Dict
+from typing import Deque, Dict
 
 from nav_msgs.msg import Odometry
 import rclpy
@@ -16,11 +19,14 @@ class TrainingCoordinatorNode(Node):
         self.declare_parameter("max_episodes", 4000)
         self.declare_parameter("max_steps", 500)
         self.declare_parameter("reset_policy", 1)
-        self.declare_parameter("collision_penalty", -2.0)
+        self.declare_parameter("collision_penalty", -10.0)
         self.declare_parameter("capture_radius", 2.0)
         self.declare_parameter("capture_steps", 5)
+        self.declare_parameter("capture_required_pursuers", 3)
         self.declare_parameter("initial_reset_delay_sec", 5.0)
-        self.declare_parameter("always_reset_world", True)
+        self.declare_parameter("always_reset_world", False)
+        self.declare_parameter("metrics_output_dir", "artifacts/metrics")
+        self.declare_parameter("metrics_window_episodes", 100)
 
         self.num_pursuers = self.get_parameter("num_pursuers").get_parameter_value().integer_value
         self.num_evaders = self.get_parameter("num_evaders").get_parameter_value().integer_value
@@ -38,6 +44,13 @@ class TrainingCoordinatorNode(Node):
         self.collision_penalty_total = 0.0
         self.odom_states: Dict[int, Odometry] = {}
         self.startup_reset_issued = False
+        self.episode_records: Deque[Dict[str, float]] = deque(
+            maxlen=max(1, self.get_parameter("metrics_window_episodes").get_parameter_value().integer_value)
+        )
+        self.metrics_dir = self._resolve_metrics_dir()
+        self.episode_metrics_path = os.path.join(self.metrics_dir, "episode_metrics.csv")
+        self.window_metrics_path = os.path.join(self.metrics_dir, "paper_window_metrics.csv")
+        self._init_metrics_files()
 
         self.active_reset_id = 0
         self.awaiting_reset = False
@@ -161,11 +174,50 @@ class TrainingCoordinatorNode(Node):
 
         self._publish_agent_reset_if_ready(reset_id, reason)
 
-    def _is_capture(self) -> bool:
+    def _resolve_metrics_dir(self) -> str:
+        raw_dir = self.get_parameter("metrics_output_dir").get_parameter_value().string_value
+        out_dir = raw_dir if os.path.isabs(raw_dir) else os.path.join(os.getcwd(), raw_dir)
+        os.makedirs(out_dir, exist_ok=True)
+        return out_dir
+
+    def _init_metrics_files(self) -> None:
+        if not os.path.exists(self.episode_metrics_path):
+            with open(self.episode_metrics_path, "w", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                writer.writerow(
+                    [
+                        "episode",
+                        "steps",
+                        "done_reason",
+                        "success",
+                        "capture_streak",
+                        "capturing_pursuers",
+                        "collision_events",
+                        "collision_penalty_total",
+                    ]
+                )
+
+        if not os.path.exists(self.window_metrics_path):
+            with open(self.window_metrics_path, "w", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                writer.writerow(
+                    [
+                        "episode",
+                        "window_size",
+                        "mission_success_rate",
+                        "mean_episode_steps",
+                        "mean_success_capture_steps",
+                        "collision_rate",
+                        "timeout_rate",
+                    ]
+                )
+
+    def _capturing_pursuer_count(self) -> int:
         capture_radius = self.get_parameter("capture_radius").get_parameter_value().double_value
         if self.num_evaders <= 0:
-            return False
+            return 0
 
+        max_count = 0
         for evader_offset in range(self.num_evaders):
             evader_id = self.num_pursuers + evader_offset
             evader = self.odom_states.get(evader_id)
@@ -174,6 +226,7 @@ class TrainingCoordinatorNode(Node):
             ex = evader.pose.pose.position.x
             ey = evader.pose.pose.position.y
 
+            count = 0
             for pursuer_id in range(self.num_pursuers):
                 pursuer = self.odom_states.get(pursuer_id)
                 if pursuer is None:
@@ -181,11 +234,103 @@ class TrainingCoordinatorNode(Node):
                 px = pursuer.pose.pose.position.x
                 py = pursuer.pose.pose.position.y
                 if math.hypot(ex - px, ey - py) <= capture_radius:
-                    return True
-        return False
+                    count += 1
+            max_count = max(max_count, count)
+        return max_count
 
-    def _publish_metrics(self, done_reason: int) -> None:
-        # [episode, steps, done_reason, capture_streak, collision_events, collision_penalty_total]
+    def _is_capture(self) -> bool:
+        required = self.get_parameter("capture_required_pursuers").get_parameter_value().integer_value
+        return self._capturing_pursuer_count() >= max(1, required)
+
+    def _save_metrics(self, done_reason: int, capturing_pursuers: int) -> None:
+        episode = self.current_episode + 1
+        success = 1 if done_reason == 1 else 0
+        record = {
+            "episode": float(episode),
+            "steps": float(self.current_step),
+            "done_reason": float(done_reason),
+            "success": float(success),
+            "collision": 1.0 if done_reason == 2 else 0.0,
+            "timeout": 1.0 if done_reason == 3 else 0.0,
+        }
+        self.episode_records.append(record)
+
+        with open(self.episode_metrics_path, "a", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(
+                [
+                    episode,
+                    self.current_step,
+                    done_reason,
+                    success,
+                    self.capture_streak,
+                    capturing_pursuers,
+                    self.collision_events,
+                    self.collision_penalty_total,
+                ]
+            )
+        self.get_logger().info(
+            "[paper_metrics] episode=%d success=%d steps=%d done_reason=%d "
+            "capture_streak=%d capturing_pursuers=%d collisions=%d"
+            % (
+                episode,
+                success,
+                self.current_step,
+                done_reason,
+                self.capture_streak,
+                capturing_pursuers,
+                self.collision_events,
+            )
+        )
+
+        window = list(self.episode_records)
+        if not window:
+            return
+        window_size = len(window)
+        success_records = [r for r in window if r["success"] > 0.5]
+        mission_success_rate = sum(r["success"] for r in window) / float(window_size)
+        mean_episode_steps = sum(r["steps"] for r in window) / float(window_size)
+        mean_success_capture_steps = (
+            sum(r["steps"] for r in success_records) / float(len(success_records))
+            if success_records
+            else 0.0
+        )
+        collision_rate = sum(r["collision"] for r in window) / float(window_size)
+        timeout_rate = sum(r["timeout"] for r in window) / float(window_size)
+
+        metrics_window_episodes = self.get_parameter("metrics_window_episodes").get_parameter_value().integer_value
+        if episode % max(1, metrics_window_episodes) == 0:
+            with open(self.window_metrics_path, "a", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                writer.writerow(
+                    [
+                        episode,
+                        window_size,
+                        mission_success_rate,
+                        mean_episode_steps,
+                        mean_success_capture_steps,
+                        collision_rate,
+                        timeout_rate,
+                    ]
+                )
+            self.get_logger().info(
+                "[paper_window] episode=%d window=%d mission_success_rate=%.3f "
+                "mean_episode_steps=%.2f mean_success_capture_steps=%.2f "
+                "collision_rate=%.3f timeout_rate=%.3f"
+                % (
+                    episode,
+                    window_size,
+                    mission_success_rate,
+                    mean_episode_steps,
+                    mean_success_capture_steps,
+                    collision_rate,
+                    timeout_rate,
+                )
+            )
+
+    def _publish_metrics(self, done_reason: int, capturing_pursuers: int) -> None:
+        # Backward-compatible prefix:
+        # [episode, steps, done_reason, capture_streak, collision_events, collision_penalty_total, ...]
         msg = Float32MultiArray()
         msg.data = [
             float(self.current_episode),
@@ -194,6 +339,8 @@ class TrainingCoordinatorNode(Node):
             float(self.capture_streak),
             float(self.collision_events),
             float(self.collision_penalty_total),
+            float(capturing_pursuers),
+            float(1 if done_reason == 1 else 0),
         ]
         self.metrics_pub.publish(msg)
 
@@ -227,7 +374,9 @@ class TrainingCoordinatorNode(Node):
             return
 
         self.current_step += 1
-        if self._is_capture():
+        capturing_pursuers = self._capturing_pursuer_count()
+        required_pursuers = self.get_parameter("capture_required_pursuers").get_parameter_value().integer_value
+        if capturing_pursuers >= max(1, required_pursuers):
             self.capture_streak += 1
         else:
             self.capture_streak = 0
@@ -240,7 +389,8 @@ class TrainingCoordinatorNode(Node):
             return
 
         done_reason = 1 if done_by_capture else (2 if done_by_collision else 3)
-        self._publish_metrics(done_reason)
+        self._publish_metrics(done_reason, capturing_pursuers)
+        self._save_metrics(done_reason, capturing_pursuers)
 
         self.current_episode += 1
         self.get_logger().info(

@@ -47,12 +47,12 @@
 
 | 参数名 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| world_mode | string | random | fixed 或 random |
+| world_mode | string | none | none、fixed 或 random |
 | seed_mode | string | none | single / sequence / none |
 | seed_value | int | 42 | single 模式固定种子 |
 | seed_sequence | int[] | [42,43,44,45] | sequence 模式种子序列 |
-| obstacle_density | float | 0.3 | 随机障碍密度 |
-| world_half_extent | float | 10.0 | 世界半边长 |
+| obstacle_density | float | 0.0 | 障碍密度；0 表示无障碍 |
+| world_half_extent | float | 7.0 | 世界半边长 |
 | world_name | string | urban | Gazebo world 名 |
 | obstacle_model_package | string | swarm_bringup | 障碍模型来源包 |
 | obstacle_pool_box | int | 8 | 方形障碍模型池数量 |
@@ -67,6 +67,7 @@
 参数细化说明：
 
 1. `world_mode`:
+  - `none`: 不生成障碍物，适合先训练追捕/逃避基础策略。
   - `fixed`: 使用固定布局，便于算法对比、回归测试。
   - `random`: 每次重置可变化，泛化更好，但训练波动会更大。
 2. `seed_mode`:
@@ -84,7 +85,7 @@
 6. `world_half_extent`:
   - 世界边界为 `[-world_half_extent, +world_half_extent]`。
   - 建议与 `spawn_half_extent`、`sim_bridge.world_half_extent` 保持一致或前者更小。
-  - 必须与 world 文件中的实际围墙匹配。以 `urban.world` 为例，围墙中心在 `±10.1` 且墙厚 `0.2`，可用内边界约为 `±10.0`，因此 `world_half_extent` 建议保持 `10.0`。
+  - 必须与 world 文件中的实际围墙匹配。以 `urban.world` 为例，围墙中心在 `±7.1` 且墙厚 `0.2`，可用内边界约为 `±7.0`，因此 `world_half_extent` 建议保持 `7.0`。
 
 话题：
 
@@ -104,8 +105,8 @@
 | num_evaders | int | 1 | 逃避者数量 |
 | collision_distance | float | 0.8 | 统一碰撞距离约束 |
 | capture_radius | float | 2.0 | reset 时追逃最小间隔约束 |
-| world_half_extent | float | 10.0 | 重置采样边界 |
-| spawn_half_extent | float | 9.0 | 采样区域半边长 |
+| world_half_extent | float | 7.0 | 重置采样边界 |
+| spawn_half_extent | float | 6.5 | 采样区域半边长 |
 | spawn_attempts | int | 300 | 最大采样尝试次数 |
 | spawn_z | float | 1.0 | 重置高度 |
 | world_name | string | urban | Gazebo world 名，用于 set_pose 服务路径 |
@@ -165,7 +166,7 @@
 | pursuer_max_speed | float | -1.0 | 追捕者速度上限（<=0 回退 max_speed） |
 | evader_max_speed | float | -1.0 | 逃避者速度上限（<=0 回退 max_speed） |
 | linear_drag | float | 0.15 | 线性阻尼 |
-| world_half_extent | float | 10.0 | 位置边界裁剪 |
+| world_half_extent | float | 7.0 | 位置边界裁剪 |
 | fixed_z | float | 1.0 | 固定高度 |
 | control_requires_reset | bool | true | 首次 reset 前不执行控制回写 |
 
@@ -246,7 +247,7 @@
 | pursuer_max_accel | float | -1.0 | 追捕者最大加速度（<=0 回退 max_accel） |
 | evader_max_accel | float | -1.0 | 逃避者最大加速度（<=0 回退 max_accel） |
 | capture_radius | float | 2.0 | 捕获判定半径 |
-| collision_penalty | float | -2.0 | 碰撞惩罚 |
+| collision_penalty | float | -10.0 | 碰撞终止惩罚 |
 | discount_gamma | float | 0.99 | 折扣因子 |
 | target_tau | float | 0.01 | 软更新系数 |
 | pursuer_actor_lr | float | 3e-4 | 追捕者 Actor 学习率 |
@@ -320,7 +321,7 @@ checkpoint 产物：
 | max_episodes | int | 4000 | 最大回合数 |
 | max_steps | int | 500 | 每回合最大步数 |
 | reset_policy | int | 1 | 1 固定恢复; 2 安全随机; 3 先重置世界再随机 |
-| collision_penalty | float | -2.0 | 碰撞罚分累计到指标 |
+| collision_penalty | float | -10.0 | 碰撞罚分累计到指标 |
 | capture_radius | float | 2.0 | 追捕半径 |
 | capture_steps | int | 5 | 连续满足追捕步数 |
 | initial_reset_delay_sec | float | 5.0 | 启动后首次 reset 延迟 |
@@ -337,7 +338,7 @@ checkpoint 产物：
   - 过小会频繁超时，过大则训练单回合成本高。
 3. `reset_policy`:
   - `1`: 固定重置到初始点，训练最稳定。
-  - `2`: 安全随机重置，泛化更好（推荐默认）。
+  - `2`: 安全随机重置智能体位置，不重置世界时适合固定地图复现实验（推荐默认）。
   - `3`: 先重置世界再随机，难度最高、适合后期增强。
 4. `initial_reset_delay_sec`:
   - 只用于启动阶段，等待 Gazebo 与模型服务稳定。
@@ -362,7 +363,7 @@ checkpoint 产物：
 | 2 | done_reason | 1 | 回合结束原因 | `1=捕获`, `2=碰撞`, `3=超时` |
 | 3 | capture_streak | 5 | 结束时连续满足捕获条件的步数 | 若常达 `capture_steps`，说明捕获效率在提升 |
 | 4 | collision_events | 2 | 该回合累计碰撞事件数 | 趋势下降通常表示避障能力提升 |
-| 5 | collision_penalty_total | -4.0 | 该回合碰撞惩罚累计值 | 约等于 `collision_events * collision_penalty` |
+| 5 | collision_penalty_total | -20.0 | 该回合碰撞惩罚累计值 | 约等于 `collision_events * collision_penalty` |
 
 补充说明：
 
@@ -413,10 +414,10 @@ world 已包含：
 | max_episodes | 60 | 回合数 |
 | max_steps | 120 | 每回合步数 |
 | reset_policy | 2 | 重置策略 |
-| world_mode | random | 世界布局模式 |
-| seed_mode | none | 随机种子模式 |
+| world_mode | none | 世界布局模式 |
+| seed_mode | single | 随机种子模式 |
 | seed_value | 42 | 固定种子 |
-| obstacle_density | 0.3 | 障碍密度 |
+| obstacle_density | 0.0 | 障碍密度 |
 | collision_distance | 0.8 | 碰撞约束采样间距 |
 | pursuer_algo | maddpg | 追捕算法：maddpg / flocking |
 | pursuer_train_mode | train_scratch | 追捕训练模式 |
@@ -431,7 +432,7 @@ world 已包含：
 | obstacle_model_package | swarm_bringup | 障碍模型来源包 |
 | obstacle_spawn_attempts | 400 | 障碍布局采样尝试次数 |
 | obstacle_min_clearance | 0.2 | 障碍最小间距 |
-| spawn_half_extent | 9.0 | agent 重置采样半径 |
+| spawn_half_extent | 6.5 | agent 重置采样半径 |
 | spawn_attempts | 300 | agent 重置采样尝试次数 |
 | checkpoint_prefix | pursuer_policy | 权重名前缀 |
 | pursuer_max_accel | -1.0 | 追捕者最大加速度（<=0 回退 max_accel） |

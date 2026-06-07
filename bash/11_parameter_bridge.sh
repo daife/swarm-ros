@@ -14,8 +14,6 @@ for ((i=0; i<NUM_PURSUERS; i++)); do
   name="${PURSUER_PREFIX}_${i}"
   BRIDGE_ARGS+=(
     "/model/${name}/odometry@nav_msgs/msg/Odometry@gz.msgs.Odometry"         # 可选: 里程计桥接
-    "/model/${name}/contacts@ros_gz_interfaces/msg/Contacts@gz.msgs.Contacts" # 可选: 默认碰撞桥接
-    "/world/${WORLD_NAME}/model/${name}/link/base_link/sensor/contact_sensor/contact@ros_gz_interfaces/msg/Contacts@gz.msgs.Contacts" # 可选: 传感器碰撞桥接
   )
 done
 
@@ -23,8 +21,6 @@ for ((i=0; i<NUM_EVADERS; i++)); do
   name="${EVADER_PREFIX}_${i}"
   BRIDGE_ARGS+=(
     "/model/${name}/odometry@nav_msgs/msg/Odometry@gz.msgs.Odometry"         # 可选: 里程计桥接
-    "/model/${name}/contacts@ros_gz_interfaces/msg/Contacts@gz.msgs.Contacts" # 可选: 默认碰撞桥接
-    "/world/${WORLD_NAME}/model/${name}/link/base_link/sensor/contact_sensor/contact@ros_gz_interfaces/msg/Contacts@gz.msgs.Contacts" # 可选: 传感器碰撞桥接
   )
 done
 

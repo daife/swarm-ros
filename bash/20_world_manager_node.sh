@@ -6,11 +6,11 @@ CONFIG_FILE="${1:-}"
 source "${SCRIPT_DIR}/_load_config.sh" "${CONFIG_FILE}"
 
 ARGS=(
-  -p "world_mode:=${WORLD_MODE}"                     # 可选: fixed(random对比)/random(泛化训练)
+  -p "world_mode:=${WORLD_MODE}"                     # 可选: none(无障碍)/fixed/random
   -p "seed_mode:=${SEED_MODE}"                       # 可选: single/sequence/none
   -p "seed_value:=${SEED_VALUE}"                     # 可选: single 模式固定种子
   -p "seed_sequence:=${SEED_SEQUENCE}"               # 可选: sequence 模式种子列表
-  -p "obstacle_density:=${OBSTACLE_DENSITY}"         # 可选: 障碍密度
+  -p "obstacle_density:=${OBSTACLE_DENSITY}"         # 可选: 障碍密度；0 表示无障碍
   -p "world_half_extent:=${WORLD_HALF_EXTENT}"       # 可选: 世界边界半径
   -p "world_name:=${WORLD_NAME}"                     # 可选: Gazebo world 名
   -p "obstacle_model_package:=${OBSTACLE_MODEL_PACKAGE}" # 可选: 障碍模型来源包
