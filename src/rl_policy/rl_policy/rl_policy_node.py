@@ -213,8 +213,13 @@ class RLPolicyNode(Node):
         # Collaborative: [rel_p_j(2), rvel_p_j(2), rel_obs_p_j(2), rel_target_p_j(2)] -> 8 * (num_p - 1)
         self.pursuer_obs_dim = 8 * self.num_pursuers
         self.global_state_dim = 4 * self.total_agents
+        self.tp_input_dim = 2 + 4 * self.num_pursuers
         self.cbc_feature_dim = 8
-        self.cbc_token_dim = self.cbc_feature_dim + 2
+        self.cbc_prediction_dim = 2 * max(
+            1,
+            self.get_parameter("tp_predict_steps").get_parameter_value().integer_value,
+        )
+        self.cbc_token_dim = self.cbc_feature_dim + self.cbc_prediction_dim
         self.cbc_critic_token_dim = self.cbc_token_dim + 2
 
         for agent_id in range(self.total_agents):
@@ -375,8 +380,10 @@ class RLPolicyNode(Node):
 
         joint_action_dim = 2 * self.num_pursuers
         critic_input_dim = self.global_state_dim + joint_action_dim
+        self.tp_input_dim = 2 + 4 * self.num_pursuers
         self.cbc_feature_dim = 8
-        self.cbc_token_dim = self.cbc_feature_dim + 2
+        self.cbc_prediction_dim = 2 * max(1, int(tp_predict_steps))
+        self.cbc_token_dim = self.cbc_feature_dim + self.cbc_prediction_dim
         self.cbc_critic_token_dim = self.cbc_token_dim + 2
 
         if self.pursuer_algo == "cbc_tp_net":
@@ -403,7 +410,7 @@ class RLPolicyNode(Node):
             for critic in self.pursuer_critics
         ]
         self.tp_net = TargetPredictionNet(
-            input_dim=self.global_state_dim + 2,
+            input_dim=self.tp_input_dim,
             hidden_dim=tp_hidden_dim,
             predict_steps=max(1, int(tp_predict_steps)),
         ).to(self.device)
@@ -881,7 +888,15 @@ class RLPolicyNode(Node):
 
     def _tp_input_row(self, snapshot: ObservationSnapshot, global_state: np.ndarray) -> np.ndarray:
         target_id = self.num_pursuers
-        return np.concatenate([snapshot.positions[target_id], global_state], axis=0).astype(np.float32)
+        _ = global_state
+        return np.concatenate(
+            [
+                snapshot.positions[target_id],
+                snapshot.positions[: self.num_pursuers].reshape(-1),
+                snapshot.velocities[: self.num_pursuers].reshape(-1),
+            ],
+            axis=0,
+        ).astype(np.float32)
 
     def _record_tp_history(self, snapshot: ObservationSnapshot, global_state: np.ndarray) -> None:
         self.state_history.append(self._tp_input_row(snapshot, global_state))
@@ -898,7 +913,9 @@ class RLPolicyNode(Node):
 
     def _target_prediction(self, snapshot: ObservationSnapshot, global_state: np.ndarray) -> np.ndarray:
         target_id = self.num_pursuers
-        fallback = snapshot.positions[target_id].astype(np.float32)
+        k = self.get_parameter("tp_predict_steps").get_parameter_value().integer_value
+        k = max(1, int(k))
+        fallback = np.tile(snapshot.positions[target_id].astype(np.float32), k)
         if torch is None or self.tp_net is None:
             return fallback
 
@@ -910,8 +927,17 @@ class RLPolicyNode(Node):
         history[-1] = self._tp_input_row(snapshot, global_state)
         history_tensor = torch.tensor(history, dtype=torch.float32, device=self.device).unsqueeze(0)
         with torch.no_grad():
-            pred = self.tp_net(history_tensor).reshape(1, -1, 2)[0, -1, :]
+            pred = self.tp_net(history_tensor).reshape(-1)
         return pred.cpu().numpy().astype(np.float32)
+
+    def _target_prediction_relative_to(
+        self,
+        target_prediction: np.ndarray,
+        agent_pos: np.ndarray,
+    ) -> np.ndarray:
+        pred = np.asarray(target_prediction, dtype=np.float32).reshape(-1, 2)
+        pos = np.asarray(agent_pos, dtype=np.float32).reshape(1, 2)
+        return (pred - pos).reshape(-1).astype(np.float32)
 
     def _build_cbc_actor_tokens(
         self,
@@ -933,12 +959,27 @@ class RLPolicyNode(Node):
         for i in range(self.num_pursuers):
             row = pursuer_obs[i]
             self_features = row[: self.cbc_feature_dim]
-            tokens = [np.concatenate([self_features, target_prediction], axis=0)]
+            agent_pos = self_features[:2]
+            tokens = [
+                np.concatenate(
+                    [self_features, self._target_prediction_relative_to(target_prediction, agent_pos)],
+                    axis=0,
+                )
+            ]
 
             start = self.cbc_feature_dim
             while start + self.cbc_feature_dim <= row.size:
                 peer_features = row[start : start + self.cbc_feature_dim]
-                tokens.append(np.concatenate([peer_features, target_prediction], axis=0))
+                peer_pos = agent_pos + peer_features[:2]
+                tokens.append(
+                    np.concatenate(
+                        [
+                            peer_features,
+                            self._target_prediction_relative_to(target_prediction, peer_pos),
+                        ],
+                        axis=0,
+                    )
+                )
                 start += self.cbc_feature_dim
 
             tokens.append(tokens[0].copy())
@@ -1030,7 +1071,7 @@ class RLPolicyNode(Node):
         if self.pursuer_algo == "cbc_tp_net":
             target_prediction = getattr(self, "_latest_target_prediction", None)
             if target_prediction is None:
-                target_prediction = np.zeros(2, dtype=np.float32)
+                target_prediction = np.zeros(self.cbc_prediction_dim, dtype=np.float32)
             return self._policy_cbc_tp_actions(
                 pursuer_obs,
                 np.asarray(target_prediction, dtype=np.float32),
