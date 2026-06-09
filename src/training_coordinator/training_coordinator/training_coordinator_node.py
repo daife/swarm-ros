@@ -19,7 +19,8 @@ class TrainingCoordinatorNode(Node):
         self.declare_parameter("max_episodes", 4000)
         self.declare_parameter("max_steps", 500)
         self.declare_parameter("reset_policy", 1)
-        self.declare_parameter("collision_penalty", -10.0)
+        self.declare_parameter("collision_penalty", -2.0)
+        self.declare_parameter("terminate_on_collision", True)
         self.declare_parameter("capture_radius", 2.0)
         self.declare_parameter("capture_steps", 5)
         self.declare_parameter("capture_required_pursuers", 3)
@@ -382,7 +383,8 @@ class TrainingCoordinatorNode(Node):
             self.capture_streak = 0
 
         done_by_capture = self.capture_streak >= capture_steps
-        done_by_collision = self.collision_events > 0
+        terminate_on_collision = self.get_parameter("terminate_on_collision").get_parameter_value().bool_value
+        done_by_collision = terminate_on_collision and self.collision_events > 0
         done_by_step = self.current_step >= max_steps
 
         if not (done_by_capture or done_by_collision or done_by_step):

@@ -12,6 +12,7 @@ ARGS=(
   -p "max_steps:=${MAX_STEPS}"                         # 可选: 每回合最大步数
   -p "reset_policy:=${RESET_POLICY}"                   # 可选: 1固定/2安全随机/3先重置世界
   -p "collision_penalty:=${COLLISION_PENALTY}"         # 可选: 碰撞惩罚累计值
+  -p "terminate_on_collision:=${TERMINATE_ON_COLLISION}" # 可选: 碰撞是否立即结束 episode；论文默认 false
   -p "capture_radius:=${CAPTURE_RADIUS}"               # 可选: 捕获判定半径
   -p "capture_required_pursuers:=${CAPTURE_REQUIRED_PURSUERS}" # 可选: 同时进入捕获半径的 pursuer 数
   -p "capture_steps:=${CAPTURE_STEPS}"                 # 可选: 连续捕获步数阈值

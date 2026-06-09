@@ -1,21 +1,35 @@
 #!/usr/bin/env bash
 
+# Detect script directory (works for both bash and zsh when sourced)
+if [ -n "${BASH_SOURCE[0]}" ]; then
+    _env_script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+elif [ -n "${(%):-%x}" ]; then
+    _env_script_dir="$(cd "$(dirname "${(%):-%x}")" && pwd)"
+else
+    _env_script_dir="$(cd "$(dirname "$0")" && pwd)"
+fi
+
 # Use project-local Python environment.
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/venv/bin/activate"
+source "${_env_script_dir}/venv/bin/activate"
 
 # Load ROS 2 Jazzy environment.
-# Aready sourced by ~/.bashrc, but we need to source it here for the case when this script is run in a non-interactive shell.
-source /opt/ros/jazzy/setup.bash
+if [ -n "${ZSH_VERSION}" ]; then
+    source /opt/ros/jazzy/setup.zsh
+else
+    source /opt/ros/jazzy/setup.bash
+fi
 
 # Load this workspace install environment if it exists.
-if [ -f "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/install/setup.bash" ]; then
-  source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/install/setup.bash"
+if [ -n "${ZSH_VERSION}" ] && [ -f "${_env_script_dir}/install/setup.zsh" ]; then
+    source "${_env_script_dir}/install/setup.zsh"
+elif [ -f "${_env_script_dir}/install/setup.bash" ]; then
+    source "${_env_script_dir}/install/setup.bash"
 fi
 
 # Set ROS_DOMAIN_ID to 0 for all nodes in this workspace.
 export ROS_DOMAIN_ID=0
 
-# For the case when run in WSL,the fastdds would be not available.Set RMW_IMPLEMENTATION to cyclonedds for all nodes in this workspace.
-# If you have fastdds installed and want to use it, please set RMW_IMPLEMENTATION to rmw_fastrtps_cpp.
+# For WSL, fastdds may be unavailable. Use cyclonedds instead.
 export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
-# You should run apt install ros-jazzy-rmw-cyclonedds-cpp first to install cyclonedds for ROS 2 Jazzy. If you have already installed it, please ignore this message.
+
+unset _env_script_dir

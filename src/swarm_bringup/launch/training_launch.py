@@ -64,6 +64,7 @@ def generate_launch_description() -> LaunchDescription:
     capture_required_pursuers = LaunchConfiguration("capture_required_pursuers")
     capture_steps = LaunchConfiguration("capture_steps")
     collision_penalty = LaunchConfiguration("collision_penalty")
+    terminate_on_collision = LaunchConfiguration("terminate_on_collision")
     obstacle_density = LaunchConfiguration("obstacle_density")
     pursuer_algo = LaunchConfiguration("pursuer_algo")
     pursuer_train_mode = LaunchConfiguration("pursuer_train_mode")
@@ -95,6 +96,7 @@ def generate_launch_description() -> LaunchDescription:
     cbc_hidden_dim = LaunchConfiguration("cbc_hidden_dim")
     reward_safe_distance = LaunchConfiguration("reward_safe_distance")
     reward_normalization = LaunchConfiguration("reward_normalization")
+    reward_approach_weight = LaunchConfiguration("reward_approach_weight")
     use_synthetic_obs_when_missing = LaunchConfiguration("use_synthetic_obs_when_missing")
     torch_device = LaunchConfiguration("torch_device")
     world_half_extent = LaunchConfiguration("world_half_extent")
@@ -159,7 +161,8 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("capture_radius", default_value="2.0"),
             DeclareLaunchArgument("capture_required_pursuers", default_value="3"),
             DeclareLaunchArgument("capture_steps", default_value="5"),
-            DeclareLaunchArgument("collision_penalty", default_value="-10.0"),
+            DeclareLaunchArgument("collision_penalty", default_value="-2.0"),
+            DeclareLaunchArgument("terminate_on_collision", default_value="true"),
             DeclareLaunchArgument("obstacle_density", default_value="0.0"),
             DeclareLaunchArgument("pursuer_algo", default_value="cbc_tp_net"),
             DeclareLaunchArgument("pursuer_train_mode", default_value="train_scratch"),
@@ -195,6 +198,7 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("cbc_hidden_dim", default_value="128"),
             DeclareLaunchArgument("reward_safe_distance", default_value="2.0"),
             DeclareLaunchArgument("reward_normalization", default_value="0.05"),
+            DeclareLaunchArgument("reward_approach_weight", default_value="0.3"),
             DeclareLaunchArgument("use_synthetic_obs_when_missing", default_value="true"),
             DeclareLaunchArgument("torch_device", default_value="auto"),
             DeclareLaunchArgument("world_half_extent", default_value="7.0"),
@@ -372,6 +376,7 @@ def generate_launch_description() -> LaunchDescription:
                             value_type=int,
                         ),
                         "collision_penalty": ParameterValue(collision_penalty, value_type=float),
+                        "terminate_on_collision": ParameterValue(terminate_on_collision, value_type=bool),
                         "discount_gamma": ParameterValue(discount_gamma, value_type=float),
                         "target_tau": ParameterValue(target_tau, value_type=float),
                         "pursuer_actor_lr": ParameterValue(pursuer_actor_lr, value_type=float),
@@ -393,6 +398,7 @@ def generate_launch_description() -> LaunchDescription:
                         "cbc_hidden_dim": ParameterValue(cbc_hidden_dim, value_type=int),
                         "reward_safe_distance": ParameterValue(reward_safe_distance, value_type=float),
                         "reward_normalization": ParameterValue(reward_normalization, value_type=float),
+                        "reward_approach_weight": ParameterValue(reward_approach_weight, value_type=float),
                         "use_synthetic_obs_when_missing": ParameterValue(
                             use_synthetic_obs_when_missing,
                             value_type=bool,
@@ -417,6 +423,7 @@ def generate_launch_description() -> LaunchDescription:
                         "max_steps": ParameterValue(max_steps, value_type=int),
                         "reset_policy": ParameterValue(reset_policy, value_type=int),
                         "collision_penalty": ParameterValue(collision_penalty, value_type=float),
+                        "terminate_on_collision": ParameterValue(terminate_on_collision, value_type=bool),
                         "capture_radius": ParameterValue(capture_radius, value_type=float),
                         "capture_required_pursuers": ParameterValue(
                             capture_required_pursuers,

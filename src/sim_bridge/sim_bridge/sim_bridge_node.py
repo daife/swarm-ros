@@ -204,6 +204,10 @@ class SimBridgeNode(Node):
             out.data = False
         else:
             out.data = self._is_2d_collision(self.positions[agent_id])
+        if out.data:
+            self.get_logger().warn(
+                f"[collision] agent_{agent_id} at x={self.positions[agent_id][0]:.2f} y={self.positions[agent_id][1]:.2f}"
+            )
         self.collision_pubs[agent_id].publish(out)
 
     def on_cmd_accel(self, agent_id: int, msg: Accel) -> None:

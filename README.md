@@ -252,7 +252,7 @@ colcon build --symlink-install  --base-paths src
 | pursuer_max_accel | float | -1.0 | 追捕者最大加速度（<=0 回退 max_accel） |
 | evader_max_accel | float | -1.0 | 逃避者最大加速度（<=0 回退 max_accel） |
 | capture_radius | float | 2.0 | 捕获判定半径 |
-| collision_penalty | float | -10.0 | 碰撞终止惩罚 |
+| collision_penalty | float | -2.0 | 碰撞惩罚 |
 | discount_gamma | float | 0.99 | 折扣因子 |
 | target_tau | float | 0.01 | 软更新系数 |
 | pursuer_actor_lr | float | 3e-4 | 追捕者 Actor 学习率 |
@@ -326,7 +326,7 @@ checkpoint 产物：
 | max_episodes | int | 4000 | 最大回合数 |
 | max_steps | int | 500 | 每回合最大步数 |
 | reset_policy | int | 1 | 1 固定恢复; 2 安全随机; 3 先重置世界再随机 |
-| collision_penalty | float | -10.0 | 碰撞罚分累计到指标 |
+| collision_penalty | float | -2.0 | 碰撞罚分累计到指标 |
 | capture_radius | float | 2.0 | 追捕半径 |
 | capture_steps | int | 5 | 连续满足追捕步数 |
 | initial_reset_delay_sec | float | 5.0 | 启动后首次 reset 延迟 |
@@ -368,7 +368,7 @@ checkpoint 产物：
 | 2 | done_reason | 1 | 回合结束原因 | `1=捕获`, `2=碰撞`, `3=超时` |
 | 3 | capture_streak | 5 | 结束时连续满足捕获条件的步数 | 若常达 `capture_steps`，说明捕获效率在提升 |
 | 4 | collision_events | 2 | 该回合累计碰撞事件数 | 趋势下降通常表示避障能力提升 |
-| 5 | collision_penalty_total | -20.0 | 该回合碰撞惩罚累计值 | 约等于 `collision_events * collision_penalty` |
+| 5 | collision_penalty_total | -4.0 | 该回合碰撞惩罚累计值 | 约等于 `collision_events * collision_penalty` |
 
 补充说明：
 

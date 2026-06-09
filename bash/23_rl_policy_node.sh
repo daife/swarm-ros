@@ -19,6 +19,7 @@ ARGS=(
   -p "capture_radius:=${CAPTURE_RADIUS}"                              # 可选: 捕获判定距离
   -p "capture_required_pursuers:=${CAPTURE_REQUIRED_PURSUERS}"         # 可选: 同时进入捕获半径的 pursuer 数
   -p "collision_penalty:=${COLLISION_PENALTY}"                        # 可选: 碰撞惩罚
+  -p "terminate_on_collision:=${TERMINATE_ON_COLLISION}"              # 可选: 碰撞是否结束 episode
   -p "discount_gamma:=${DISCOUNT_GAMMA}"                              # 可选: 折扣因子
   -p "target_tau:=${TARGET_TAU}"                                      # 可选: target 网络软更新系数
 
@@ -42,6 +43,7 @@ ARGS=(
   -p "cbc_hidden_dim:=${CBC_HIDDEN_DIM}"                              # 可选: CBC 双向 LSTM 隐藏维度
   -p "reward_safe_distance:=${REWARD_SAFE_DISTANCE}"                  # 可选: 障碍安全距离
   -p "reward_normalization:=${REWARD_NORMALIZATION}"                  # 可选: 奖励距离归一化系数
+  -p "reward_approach_weight:=${REWARD_APPROACH_WEIGHT}"              # 可选: 靠近趋势奖励权重
 
   -p "checkpoint_dir:=${CHECKPOINT_DIR}"                              # 可选: 权重保存目录
   -p "checkpoint_prefix:=${CHECKPOINT_PREFIX}"                        # 可选: 权重文件名前缀
