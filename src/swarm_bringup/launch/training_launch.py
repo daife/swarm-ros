@@ -1,4 +1,5 @@
 import os
+from datetime import datetime
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
@@ -48,6 +49,11 @@ def _create_bridge_process(context, *args, **kwargs):
 
 
 def generate_launch_description() -> LaunchDescription:
+    artifacts_run_dir = os.path.join(
+        "artifacts",
+        datetime.now().strftime("%Y%m%d_%H%M%S"),
+    )
+
     gazebo_gui = LaunchConfiguration("gazebo_gui")
     world_name = LaunchConfiguration("world_name")
     world_sdf = LaunchConfiguration("world_sdf")
@@ -152,7 +158,7 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("num_pursuers", default_value="5"),
             DeclareLaunchArgument("num_evaders", default_value="1"),
             DeclareLaunchArgument("max_episodes", default_value="4000"),
-            DeclareLaunchArgument("max_steps", default_value="500"),
+            DeclareLaunchArgument("max_steps", default_value="1000"),
             DeclareLaunchArgument("reset_policy", default_value="2"),
             DeclareLaunchArgument("world_mode", default_value="none"),
             DeclareLaunchArgument("seed_mode", default_value="single"),
@@ -162,7 +168,7 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("capture_required_pursuers", default_value="3"),
             DeclareLaunchArgument("capture_steps", default_value="5"),
             DeclareLaunchArgument("collision_penalty", default_value="-2.0"),
-            DeclareLaunchArgument("terminate_on_collision", default_value="true"),
+            DeclareLaunchArgument("terminate_on_collision", default_value="false"),
             DeclareLaunchArgument("obstacle_density", default_value="0.0"),
             DeclareLaunchArgument("pursuer_algo", default_value="cbc_tp_net"),
             DeclareLaunchArgument("pursuer_train_mode", default_value="train_scratch"),
@@ -173,9 +179,15 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("max_accel", default_value="1.0"),
             DeclareLaunchArgument("pursuer_max_accel", default_value="1.2"),
             DeclareLaunchArgument("evader_max_accel", default_value="0.8"),
-            DeclareLaunchArgument("checkpoint_dir", default_value="artifacts/checkpoints"),
+            DeclareLaunchArgument(
+                "checkpoint_dir",
+                default_value=os.path.join(artifacts_run_dir, "checkpoints"),
+            ),
             DeclareLaunchArgument("checkpoint_prefix", default_value="pursuer_policy"),
-            DeclareLaunchArgument("metrics_output_dir", default_value="artifacts/metrics"),
+            DeclareLaunchArgument(
+                "metrics_output_dir",
+                default_value=os.path.join(artifacts_run_dir, "metrics"),
+            ),
             DeclareLaunchArgument("metrics_window_episodes", default_value="100"),
             DeclareLaunchArgument("buffer_capacity", default_value="1000000"),
             DeclareLaunchArgument("batch_size", default_value="512"),
@@ -184,8 +196,8 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("train_every_steps", default_value="50"),
             DeclareLaunchArgument("discount_gamma", default_value="0.95"),
             DeclareLaunchArgument("target_tau", default_value="0.01"),
-            DeclareLaunchArgument("pursuer_actor_lr", default_value="0.001"),
-            DeclareLaunchArgument("pursuer_critic_lr", default_value="0.001"),
+            DeclareLaunchArgument("pursuer_actor_lr", default_value="0.002"),
+            DeclareLaunchArgument("pursuer_critic_lr", default_value="0.002"),
             DeclareLaunchArgument("evader_actor_lr", default_value="0.001"),
             DeclareLaunchArgument("evader_critic_lr", default_value="0.001"),
             DeclareLaunchArgument("exploration_noise_std", default_value="0.2"),
@@ -193,9 +205,9 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("optimize_horizon_steps", default_value="500"),
             DeclareLaunchArgument("tp_history_steps", default_value="10"),
             DeclareLaunchArgument("tp_predict_steps", default_value="3"),
-            DeclareLaunchArgument("tp_hidden_dim", default_value="128"),
-            DeclareLaunchArgument("tp_lr", default_value="0.001"),
-            DeclareLaunchArgument("cbc_hidden_dim", default_value="128"),
+            DeclareLaunchArgument("tp_hidden_dim", default_value="256"),
+            DeclareLaunchArgument("tp_lr", default_value="0.002"),
+            DeclareLaunchArgument("cbc_hidden_dim", default_value="256"),
             DeclareLaunchArgument("reward_safe_distance", default_value="2.0"),
             DeclareLaunchArgument("reward_normalization", default_value="0.05"),
             DeclareLaunchArgument("reward_approach_weight", default_value="0.3"),

@@ -80,15 +80,11 @@ class Critic(nn.Module):
 
 
 class TargetPredictionNet(nn.Module):
-    def __init__(self, input_dim: int, hidden_dim: int, predict_steps: int) -> None:
+    def __init__(self, input_dim: int, hidden_dim: int, predict_steps: int, num_layers: int = 2) -> None:
         super().__init__()
         self.predict_steps = predict_steps
-        self.lstm = nn.LSTM(input_dim, hidden_dim, batch_first=True)
-        self.head = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, 2 * predict_steps),
-        )
+        self.lstm = nn.LSTM(input_dim, hidden_dim, num_layers=num_layers, batch_first=True)
+        self.head = nn.Linear(hidden_dim, 2 * predict_steps)
 
     def forward(self, history: torch.Tensor) -> torch.Tensor:
         out, _ = self.lstm(history)
@@ -96,36 +92,35 @@ class TargetPredictionNet(nn.Module):
 
 
 class CBCTPActor(nn.Module):
-    def __init__(self, token_dim: int, hidden_dim: int, action_dim: int = 2) -> None:
+    def __init__(self, token_dim: int, hidden_dim: int, mlp_hidden_dim: int = 64, action_dim: int = 2) -> None:
         super().__init__()
         self.encoder = nn.LSTM(token_dim, hidden_dim, batch_first=True, bidirectional=True)
         self.head = nn.Sequential(
-            nn.Linear(2 * hidden_dim, hidden_dim),
+            nn.Linear(4 * hidden_dim, mlp_hidden_dim),
             nn.ReLU(),
-            nn.Linear(hidden_dim, action_dim),
+            nn.Linear(mlp_hidden_dim, action_dim),
             nn.Tanh(),
         )
 
     def forward(self, tokens: torch.Tensor) -> torch.Tensor:
         out, _ = self.encoder(tokens)
-        # The current agent is intentionally placed at both ends of the sequence.
-        current = 0.5 * (out[:, 0, :] + out[:, -1, :])
+        current = torch.cat([out[:, 0, :], out[:, -1, :]], dim=-1)
         return self.head(current)
 
 
 class CBCTPCritic(nn.Module):
-    def __init__(self, token_dim: int, hidden_dim: int) -> None:
+    def __init__(self, token_dim: int, hidden_dim: int, mlp_hidden_dim: int = 64) -> None:
         super().__init__()
         self.encoder = nn.LSTM(token_dim, hidden_dim, batch_first=True, bidirectional=True)
         self.head = nn.Sequential(
-            nn.Linear(2 * hidden_dim, hidden_dim),
+            nn.Linear(4 * hidden_dim, mlp_hidden_dim),
             nn.ReLU(),
-            nn.Linear(hidden_dim, 1),
+            nn.Linear(mlp_hidden_dim, 1),
         )
 
     def forward(self, tokens: torch.Tensor) -> torch.Tensor:
         out, _ = self.encoder(tokens)
-        current = 0.5 * (out[:, 0, :] + out[:, -1, :])
+        current = torch.cat([out[:, 0, :], out[:, -1, :]], dim=-1)
         return self.head(current)
 
 
@@ -157,8 +152,8 @@ class RLPolicyNode(Node):
         self.declare_parameter("terminate_on_collision", False)
         self.declare_parameter("discount_gamma", 0.95)
         self.declare_parameter("target_tau", 0.01)
-        self.declare_parameter("pursuer_actor_lr", 1e-3)
-        self.declare_parameter("pursuer_critic_lr", 1e-3)
+        self.declare_parameter("pursuer_actor_lr", 2e-3)
+        self.declare_parameter("pursuer_critic_lr", 2e-3)
         self.declare_parameter("evader_actor_lr", 1e-3)
         self.declare_parameter("evader_critic_lr", 1e-3)
         self.declare_parameter("buffer_capacity", 1000000)
@@ -171,9 +166,9 @@ class RLPolicyNode(Node):
         self.declare_parameter("optimize_horizon_steps", 500)
         self.declare_parameter("tp_history_steps", 10)
         self.declare_parameter("tp_predict_steps", 3)
-        self.declare_parameter("tp_hidden_dim", 128)
-        self.declare_parameter("tp_lr", 1e-3)
-        self.declare_parameter("cbc_hidden_dim", 128)
+        self.declare_parameter("tp_hidden_dim", 256)
+        self.declare_parameter("tp_lr", 2e-3)
+        self.declare_parameter("cbc_hidden_dim", 256)
         self.declare_parameter("reward_safe_distance", 2.0)
         self.declare_parameter("reward_normalization", 0.05)
         self.declare_parameter("reward_approach_weight", 0.3)

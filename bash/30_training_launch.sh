@@ -6,6 +6,9 @@ CONFIG_FILE="${1:-}"
 source "${SCRIPT_DIR}/_load_config.sh" "${CONFIG_FILE}"
 
 echo "[30_training_launch] backend=gazebo, gui=${GAZEBO_GUI}, world=${WORLD_NAME}"
+echo "[30_training_launch] artifacts_run_dir=${ARTIFACTS_RUN_DIR}"
+echo "[30_training_launch] checkpoint_dir=${CHECKPOINT_DIR}"
+echo "[30_training_launch] metrics_output_dir=${METRICS_OUTPUT_DIR}"
 
 LAUNCH_ARGS=(
   "gazebo_gui:=${GAZEBO_GUI}"

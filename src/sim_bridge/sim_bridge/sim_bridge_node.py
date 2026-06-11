@@ -78,6 +78,7 @@ class SimBridgeNode(Node):
         self.positions: Dict[int, np.ndarray] = {}
         self.velocities: Dict[int, np.ndarray] = {}
         self.model_ready: Dict[int, bool] = {}
+        self.collision_active: Dict[int, bool] = {}
         self.obstacles: List[Tuple[float, float, float, float, bool]] = []
         self.has_received_reset = False
         self.has_received_episode_start = False
@@ -98,6 +99,7 @@ class SimBridgeNode(Node):
             self.positions[agent_id] = np.zeros(2, dtype=float)
             self.velocities[agent_id] = np.zeros(2, dtype=float)
             self.model_ready[agent_id] = False
+            self.collision_active[agent_id] = False
 
             self.create_subscription(
                 Odometry,
@@ -177,10 +179,13 @@ class SimBridgeNode(Node):
                 )
             )
 
+    def _playable_half_extent(self) -> float:
+        return max(0.0, self.world_half_extent - self.collision_distance)
+
     def _is_2d_collision(self, pos: np.ndarray) -> bool:
         x = float(pos[0])
         y = float(pos[1])
-        margin = max(0.0, self.world_half_extent - self.collision_distance)
+        margin = self._playable_half_extent()
         if abs(x) >= margin or abs(y) >= margin:
             return True
 
@@ -198,12 +203,20 @@ class SimBridgeNode(Node):
                     return True
         return False
 
-    def _publish_2d_collision(self, agent_id: int) -> None:
+    def _publish_2d_collision(self, agent_id: int, collision_now: bool | None = None) -> None:
         out = Bool()
         if self.control_requires_reset and (not self.has_received_reset or not self.has_received_episode_start):
-            out.data = False
+            collision_now = False
         else:
-            out.data = self._is_2d_collision(self.positions[agent_id])
+            collision_now = self._is_2d_collision(self.positions[agent_id]) if collision_now is None else collision_now
+
+        was_active = self.collision_active.get(agent_id, False)
+        self.collision_active[agent_id] = bool(collision_now)
+
+        if bool(collision_now) == was_active:
+            return
+
+        out.data = bool(collision_now)
         if out.data:
             self.get_logger().warn(
                 f"[collision] agent_{agent_id} at x={self.positions[agent_id][0]:.2f} y={self.positions[agent_id][1]:.2f}"
@@ -226,6 +239,7 @@ class SimBridgeNode(Node):
         self.has_received_episode_start = False
         for agent_id in self.accels:
             self.accels[agent_id][:] = 0.0
+            self.collision_active[agent_id] = False
 
     def on_reset_poses(self, msg: PoseArray) -> None:
         self.has_received_reset = True
@@ -237,6 +251,7 @@ class SimBridgeNode(Node):
             self.positions[idx][1] = pose.position.y
             self.velocities[idx][:] = 0.0
             self.accels[idx][:] = 0.0
+            self.collision_active[idx] = False
 
     def on_reset_done(self, msg: Int32) -> None:
         reset_id = int(msg.data)
@@ -304,14 +319,26 @@ class SimBridgeNode(Node):
             if speed > speed_limit:
                 vel = vel * (speed_limit / speed)
 
-            pos = pos + vel * self.controller_dt
-            pos[0] = float(np.clip(pos[0], -self.world_half_extent, self.world_half_extent))
-            pos[1] = float(np.clip(pos[1], -self.world_half_extent, self.world_half_extent))
+            next_pos = pos + vel * self.controller_dt
+            collision_now = self._is_2d_collision(next_pos)
+            playable_half_extent = self._playable_half_extent()
+            if playable_half_extent > 0.0:
+                clamp_extent = max(0.0, playable_half_extent - 1e-3)
+                next_pos[0] = float(np.clip(next_pos[0], -clamp_extent, clamp_extent))
+                next_pos[1] = float(np.clip(next_pos[1], -clamp_extent, clamp_extent))
+                if collision_now:
+                    if abs(next_pos[0]) >= clamp_extent:
+                        vel[0] = 0.0
+                    if abs(next_pos[1]) >= clamp_extent:
+                        vel[1] = 0.0
+            else:
+                next_pos[:] = 0.0
+                vel[:] = 0.0
 
-            self.positions[agent_id] = pos
+            self.positions[agent_id] = next_pos
             self.velocities[agent_id] = vel
-            self._set_model_pose(model_name, pos, vel)
-            self._publish_2d_collision(agent_id)
+            self._set_model_pose(model_name, next_pos, vel)
+            self._publish_2d_collision(agent_id, collision_now)
 
 
 def main(args=None) -> None:

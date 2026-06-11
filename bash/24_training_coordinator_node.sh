@@ -22,5 +22,5 @@ ARGS=(
   -p "metrics_window_episodes:=${METRICS_WINDOW_EPISODES}" # 可选: 成功率统计窗口
 )
 
-echo "[24_training_coordinator_node] start"
+echo "[24_training_coordinator_node] start metrics_output_dir=${METRICS_OUTPUT_DIR}"
 exec ros2 run training_coordinator training_coordinator_node --ros-args "${ARGS[@]}"

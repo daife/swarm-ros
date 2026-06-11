@@ -62,5 +62,5 @@ if [[ -n "${EVADER_WEIGHTS}" ]]; then
   ARGS+=( -p "evader_weights:=${EVADER_WEIGHTS}" )
 fi
 
-echo "[23_rl_policy_node] start"
+echo "[23_rl_policy_node] start checkpoint_dir=${CHECKPOINT_DIR} metrics_output_dir=${METRICS_OUTPUT_DIR}"
 exec ros2 run rl_policy rl_policy_node --ros-args "${ARGS[@]}"
