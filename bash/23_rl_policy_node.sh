@@ -18,6 +18,7 @@ ARGS=(
   -p "evader_max_accel:=${EVADER_MAX_ACCEL}"                          # 可选: evader 最大加速度
   -p "capture_radius:=${CAPTURE_RADIUS}"                              # 可选: 捕获判定距离
   -p "capture_required_pursuers:=${CAPTURE_REQUIRED_PURSUERS}"         # 可选: 同时进入捕获半径的 pursuer 数
+  -p "capture_success_reward:=${CAPTURE_SUCCESS_REWARD}"               # 可选: 抓捕成功奖励
   -p "collision_penalty:=${COLLISION_PENALTY}"                        # 可选: 碰撞惩罚
   -p "terminate_on_collision:=${TERMINATE_ON_COLLISION}"              # 可选: 碰撞是否结束 episode
   -p "discount_gamma:=${DISCOUNT_GAMMA}"                              # 可选: 折扣因子
@@ -44,6 +45,7 @@ ARGS=(
   -p "reward_safe_distance:=${REWARD_SAFE_DISTANCE}"                  # 可选: 障碍安全距离
   -p "reward_normalization:=${REWARD_NORMALIZATION}"                  # 可选: 奖励距离归一化系数
   -p "reward_approach_weight:=${REWARD_APPROACH_WEIGHT}"              # 可选: 靠近趋势奖励权重
+  -p "reward_evader_escape_weight:=${REWARD_EVADER_ESCAPE_WEIGHT}"     # 可选: evader 远离 pursuer 趋势奖励权重
 
   -p "checkpoint_dir:=${CHECKPOINT_DIR}"                              # 可选: 权重保存目录
   -p "checkpoint_prefix:=${CHECKPOINT_PREFIX}"                        # 可选: 权重文件名前缀
