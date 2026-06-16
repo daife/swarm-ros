@@ -44,8 +44,6 @@ ARGS=(
   -p "cbc_hidden_dim:=${CBC_HIDDEN_DIM}"                              # 可选: CBC 双向 LSTM 隐藏维度
   -p "reward_safe_distance:=${REWARD_SAFE_DISTANCE}"                  # 可选: 障碍安全距离
   -p "reward_normalization:=${REWARD_NORMALIZATION}"                  # 可选: 奖励距离归一化系数
-  -p "reward_approach_weight:=${REWARD_APPROACH_WEIGHT}"              # 可选: 靠近趋势奖励权重
-  -p "reward_evader_escape_weight:=${REWARD_EVADER_ESCAPE_WEIGHT}"     # 可选: evader 远离 pursuer 趋势奖励权重
 
   -p "checkpoint_dir:=${CHECKPOINT_DIR}"                              # 可选: 权重保存目录
   -p "checkpoint_prefix:=${CHECKPOINT_PREFIX}"                        # 可选: 权重文件名前缀

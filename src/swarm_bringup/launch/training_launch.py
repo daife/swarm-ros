@@ -103,8 +103,6 @@ def generate_launch_description() -> LaunchDescription:
     cbc_hidden_dim = LaunchConfiguration("cbc_hidden_dim")
     reward_safe_distance = LaunchConfiguration("reward_safe_distance")
     reward_normalization = LaunchConfiguration("reward_normalization")
-    reward_approach_weight = LaunchConfiguration("reward_approach_weight")
-    reward_evader_escape_weight = LaunchConfiguration("reward_evader_escape_weight")
     use_synthetic_obs_when_missing = LaunchConfiguration("use_synthetic_obs_when_missing")
     torch_device = LaunchConfiguration("torch_device")
     world_half_extent = LaunchConfiguration("world_half_extent")
@@ -168,7 +166,7 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("collision_distance", default_value="0.8"),
             DeclareLaunchArgument("capture_radius", default_value="2.0"),
             DeclareLaunchArgument("capture_required_pursuers", default_value="3"),
-            DeclareLaunchArgument("capture_success_reward", default_value="10.0"),
+            DeclareLaunchArgument("capture_success_reward", default_value="5.0"),
             DeclareLaunchArgument("capture_steps", default_value="5"),
             DeclareLaunchArgument("collision_penalty", default_value="-2.0"),
             DeclareLaunchArgument("terminate_on_collision", default_value="false"),
@@ -199,8 +197,8 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("train_every_steps", default_value="50"),
             DeclareLaunchArgument("discount_gamma", default_value="0.95"),
             DeclareLaunchArgument("target_tau", default_value="0.01"),
-            DeclareLaunchArgument("pursuer_actor_lr", default_value="0.002"),
-            DeclareLaunchArgument("pursuer_critic_lr", default_value="0.002"),
+            DeclareLaunchArgument("pursuer_actor_lr", default_value="0.001"),
+            DeclareLaunchArgument("pursuer_critic_lr", default_value="0.001"),
             DeclareLaunchArgument("evader_actor_lr", default_value="0.001"),
             DeclareLaunchArgument("evader_critic_lr", default_value="0.001"),
             DeclareLaunchArgument("exploration_noise_std", default_value="0.2"),
@@ -209,12 +207,10 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("tp_history_steps", default_value="10"),
             DeclareLaunchArgument("tp_predict_steps", default_value="3"),
             DeclareLaunchArgument("tp_hidden_dim", default_value="256"),
-            DeclareLaunchArgument("tp_lr", default_value="0.002"),
+            DeclareLaunchArgument("tp_lr", default_value="0.001"),
             DeclareLaunchArgument("cbc_hidden_dim", default_value="256"),
             DeclareLaunchArgument("reward_safe_distance", default_value="2.0"),
             DeclareLaunchArgument("reward_normalization", default_value="0.05"),
-            DeclareLaunchArgument("reward_approach_weight", default_value="0.3"),
-            DeclareLaunchArgument("reward_evader_escape_weight", default_value="0.3"),
             DeclareLaunchArgument("use_synthetic_obs_when_missing", default_value="true"),
             DeclareLaunchArgument("torch_device", default_value="auto"),
             DeclareLaunchArgument("world_half_extent", default_value="7.0"),
@@ -418,11 +414,6 @@ def generate_launch_description() -> LaunchDescription:
                         "cbc_hidden_dim": ParameterValue(cbc_hidden_dim, value_type=int),
                         "reward_safe_distance": ParameterValue(reward_safe_distance, value_type=float),
                         "reward_normalization": ParameterValue(reward_normalization, value_type=float),
-                        "reward_approach_weight": ParameterValue(reward_approach_weight, value_type=float),
-                        "reward_evader_escape_weight": ParameterValue(
-                            reward_evader_escape_weight,
-                            value_type=float,
-                        ),
                         "use_synthetic_obs_when_missing": ParameterValue(
                             use_synthetic_obs_when_missing,
                             value_type=bool,

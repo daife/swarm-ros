@@ -152,8 +152,8 @@ class RLPolicyNode(Node):
         self.declare_parameter("terminate_on_collision", False)
         self.declare_parameter("discount_gamma", 0.95)
         self.declare_parameter("target_tau", 0.01)
-        self.declare_parameter("pursuer_actor_lr", 2e-3)
-        self.declare_parameter("pursuer_critic_lr", 2e-3)
+        self.declare_parameter("pursuer_actor_lr", 1e-3)
+        self.declare_parameter("pursuer_critic_lr", 1e-3)
         self.declare_parameter("evader_actor_lr", 1e-3)
         self.declare_parameter("evader_critic_lr", 1e-3)
         self.declare_parameter("buffer_capacity", 1000000)
@@ -167,13 +167,11 @@ class RLPolicyNode(Node):
         self.declare_parameter("tp_history_steps", 10)
         self.declare_parameter("tp_predict_steps", 3)
         self.declare_parameter("tp_hidden_dim", 256)
-        self.declare_parameter("tp_lr", 2e-3)
+        self.declare_parameter("tp_lr", 1e-3)
         self.declare_parameter("cbc_hidden_dim", 256)
         self.declare_parameter("reward_safe_distance", 2.0)
         self.declare_parameter("reward_normalization", 0.05)
-        self.declare_parameter("reward_approach_weight", 0.3)
-        self.declare_parameter("reward_evader_escape_weight", 0.3)
-        self.declare_parameter("capture_success_reward", 10.0)
+        self.declare_parameter("capture_success_reward", 5.0)
         self.declare_parameter("checkpoint_dir", "artifacts/checkpoints")
         self.declare_parameter("checkpoint_prefix", "pursuer_policy")
         self.declare_parameter("metrics_output_dir", "artifacts/metrics")
@@ -267,7 +265,6 @@ class RLPolicyNode(Node):
         )
 
         self.prev_snapshot: Optional[Dict[str, np.ndarray]] = None
-        self._prev_pursuer_dists: Dict[int, float] = {}
         self.step_counter_for_policy_delay = 0
         self.local_episode_step_count = 0
         self.pending_ready_reset_id: Optional[int] = None
@@ -712,7 +709,6 @@ class RLPolicyNode(Node):
     def _pause_for_reset(self) -> None:
         self.waiting_for_episode_start = True
         self.prev_snapshot = None
-        self._prev_pursuer_dists: Dict[int, float] = {}
         self.state_history.clear()
         self._publish_zero_actions()
 
@@ -741,7 +737,6 @@ class RLPolicyNode(Node):
         self.last_episode_start_id = reset_id
         self.waiting_for_episode_start = False
         self.prev_snapshot = None
-        self._prev_pursuer_dists: Dict[int, float] = {}
 
     def _publish_reset_ready_if_needed(self) -> None:
         if self.pending_ready_reset_id is None:
@@ -1119,10 +1114,6 @@ class RLPolicyNode(Node):
         ).get_parameter_value().integer_value
         safe_distance = self.get_parameter("reward_safe_distance").get_parameter_value().double_value
         rho = self.get_parameter("reward_normalization").get_parameter_value().double_value
-        approach_weight = self.get_parameter("reward_approach_weight").get_parameter_value().double_value
-        evader_escape_weight = (
-            self.get_parameter("reward_evader_escape_weight").get_parameter_value().double_value
-        )
         capture_success_reward = self.get_parameter(
             "capture_success_reward"
         ).get_parameter_value().double_value
@@ -1165,7 +1156,6 @@ class RLPolicyNode(Node):
             capturing_pursuers = sum(1 for dist in distances if dist <= capture_radius)
             captured = capturing_pursuers >= max(1, int(required_pursuers))
             global_reward = -sum(0.1 * rho * d for d in distances)
-            deltas = []
             for pid, dist, obs_dist in pursuer_distance_rows:
                 x = (safe_distance - obs_dist) / softplus_k
                 obstacle_term = softplus_k * (x if x > 50.0 else math.log1p(math.exp(x)))
@@ -1175,26 +1165,18 @@ class RLPolicyNode(Node):
                     + self_reward
                     + (capture_success_reward if captured else 0.0)
                 )
-                prev_d = self._prev_pursuer_dists.get(pid)
-                if prev_d is not None:
-                    delta = prev_d - dist
-                    pursuer_rewards[pid] += approach_weight * delta
-                    deltas.append(delta)
-                self._prev_pursuer_dists[pid] = dist
-            mean_delta = float(sum(deltas) / len(deltas)) if deltas else 0.0
             evader_rewards[:] = (
                 rho * mean_dist
                 - (capture_success_reward if captured else 0.0)
-                - evader_escape_weight * mean_delta
             )
 
-        pursuer_collision = any(collision_snapshot.get(pid, False) for pid in range(self.num_pursuers))
         evader_collision = any(
             collision_snapshot.get(self.num_pursuers + eidx, False)
             for eidx in range(self.num_evaders)
         )
-        if pursuer_collision:
-            pursuer_rewards += float(collision_penalty)
+        for pid in range(self.num_pursuers):
+            if collision_snapshot.get(pid, False):
+                pursuer_rewards[pid] += float(collision_penalty)
         if evader_collision:
             evader_rewards += float(collision_penalty)
 
@@ -1443,7 +1425,6 @@ class RLPolicyNode(Node):
         self.episode_return_p = 0.0
         self.episode_return_e = 0.0
         self.prev_snapshot = None
-        self._prev_pursuer_dists: Dict[int, float] = {}
         self.done_latched = False
         self.local_episode_step_count = 0
 
@@ -1455,7 +1436,6 @@ class RLPolicyNode(Node):
             if self.done_latched:
                 self._finalize_episode()
             self.prev_snapshot = None
-            self._prev_pursuer_dists: Dict[int, float] = {}
             return
 
         if self.num_evaders <= 0:
